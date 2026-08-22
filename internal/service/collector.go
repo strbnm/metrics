@@ -1,6 +1,7 @@
 package service
 
 import (
+	"fmt"
 	"math/rand/v2"
 	"runtime"
 	"time"
@@ -12,6 +13,8 @@ type Collector struct {
 	pollInterval   time.Duration
 	reportInterval time.Duration
 	pollCount      int64
+	lastMetrics    []models.Metrics
+	lastSendTime   time.Time
 }
 
 func NewCollector(pollInterval, reportInterval time.Duration) *Collector {
@@ -19,6 +22,7 @@ func NewCollector(pollInterval, reportInterval time.Duration) *Collector {
 		pollInterval:   pollInterval,
 		reportInterval: reportInterval,
 		pollCount:      0,
+		lastSendTime:   time.Now(),
 	}
 }
 
@@ -32,7 +36,7 @@ func uint32ToFloat64(value uint32) *float64 {
 	return &v
 }
 
-func (c *Collector) CollectRuntimeMetrics() []models.Metrics {
+func (c *Collector) collectOnce() {
 	var m runtime.MemStats
 	runtime.ReadMemStats(&m)
 
@@ -75,17 +79,26 @@ func (c *Collector) CollectRuntimeMetrics() []models.Metrics {
 		}()},
 	}
 
-	return metrics
+	c.lastMetrics = metrics
+}
+
+func (c *Collector) GetLastMetrics() []models.Metrics {
+	return c.lastMetrics
 }
 
 func (c *Collector) Start(sendFunc func([]models.Metrics) error) {
-	ticker := time.NewTicker(c.reportInterval)
-	defer ticker.Stop()
+	c.collectOnce()
 
-	for range ticker.C {
-		metrics := c.CollectRuntimeMetrics()
-		if err := sendFunc(metrics); err != nil {
-			continue
+	for {
+		time.Sleep(c.pollInterval)
+		c.collectOnce()
+
+		if time.Since(c.lastSendTime) >= c.reportInterval {
+			metrics := c.GetLastMetrics()
+			if err := sendFunc(metrics); err != nil {
+				fmt.Printf("Failed to send metrics: %v\n", err)
+			}
+			c.lastSendTime = time.Now()
 		}
 	}
 }
