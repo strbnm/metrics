@@ -16,7 +16,10 @@ func main() {
 
 	collector := service.NewCollector(pollInterval, reportInterval)
 
-	sender := agent.NewSender(serverURL)
+	sender, err := agent.NewSender(serverURL)
+	if err != nil {
+		log.Fatal(err)
+	}
 
 	log.Printf("Starting metrics agent: poll every %v, report every %v to %s",
 		pollInterval, reportInterval, serverURL)

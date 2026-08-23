@@ -13,11 +13,15 @@ type Sender struct {
 	client    *http.Client
 }
 
-func NewSender(serverURL string) *Sender {
+func NewSender(serverURL string) (*Sender, error) {
+	if serverURL == "" {
+		return nil, fmt.Errorf("serverURL cannot be empty")
+	}
+
 	return &Sender{
 		serverURL: serverURL,
 		client:    &http.Client{},
-	}
+	}, nil
 }
 
 func (s *Sender) Send(metrics []models.Metrics) error {
