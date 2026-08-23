@@ -6,6 +6,8 @@ import (
 	"net/http/httptest"
 	"testing"
 
+	"github.com/go-chi/chi/v5"
+	models "github.com/strbnm/metrics/internal/model"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
@@ -95,7 +97,7 @@ func TestHandler_UpdateHandler(t *testing.T) {
 			},
 		},
 		{
-			name:   "negative test #7 - invalid metric value",
+			name:   "negative test #8 - invalid metric value",
 			url:    "/update/counter/PullCount/invalid_value",
 			method: http.MethodPost,
 			want: want{
@@ -105,13 +107,13 @@ func TestHandler_UpdateHandler(t *testing.T) {
 			},
 		},
 		{
-			name:   "negative test #8 - invalid method",
+			name:   "negative test #9 - invalid method",
 			url:    "/update/counter/PullCount/invalid_value",
 			method: http.MethodGet,
 			want: want{
 				code:        405,
-				response:    "Method Not Allowed\n",
-				contentType: "text/plain; charset=utf-8",
+				response:    "", //chi не возвращает стандартные ответы для 405
+				contentType: "", //chi не возвращает стандартные ответы для 405
 			},
 		},
 	}
@@ -123,10 +125,14 @@ func TestHandler_UpdateHandler(t *testing.T) {
 			repo := repository.NewMemStorage()
 			h := NewHandler(repo)
 
-			mux := http.NewServeMux()
-			mux.HandleFunc("POST /update/{metricType}/{metricName}/{metricValue}", h.UpdateHandler)
+			r := chi.NewRouter()
+			r.Route("/", func(r chi.Router) {
+				r.Get("/", h.ListAllMetricsHandler)
+				r.Get("/value/{metricType}/{metricName}", h.ValueHandler)
+				r.Post("/update/{metricType}/{metricName}/{metricValue}", h.UpdateHandler)
+			})
 
-			mux.ServeHTTP(w, request)
+			r.ServeHTTP(w, request)
 
 			res := w.Result()
 			// проверяем код ответа
@@ -140,4 +146,228 @@ func TestHandler_UpdateHandler(t *testing.T) {
 			assert.Equal(t, test.want.contentType, res.Header.Get("Content-Type"))
 		})
 	}
+}
+
+func TestHandler_ValueHandler(t *testing.T) {
+	type want struct {
+		code        int
+		response    string
+		contentType string
+	}
+	tests := []struct {
+		name   string
+		url    string
+		method string
+		want   want
+	}{
+		{
+			name:   "positive test #1",
+			url:    "/value/gauge/Alloc",
+			method: http.MethodGet,
+			want: want{
+				code:        200,
+				response:    "1.000001",
+				contentType: "text/plain; charset=utf-8",
+			},
+		},
+		{
+			name:   "positive test #2",
+			url:    "/value/counter/PollCount",
+			method: http.MethodGet,
+			want: want{
+				code:        200,
+				response:    "100",
+				contentType: "text/plain; charset=utf-8",
+			},
+		},
+		{
+			name:   "negative test #3 - not allowed path",
+			url:    "/value/counter/PollCount/100",
+			method: http.MethodGet,
+			want: want{
+				code:        404,
+				response:    "404 page not found\n",
+				contentType: "text/plain; charset=utf-8",
+			},
+		},
+		{
+			name:   "negative test #4 - not allowed metric type",
+			url:    "/value/histogram/PollCount",
+			method: http.MethodGet,
+			want: want{
+				code:        400,
+				response:    "Invalid metric type\n",
+				contentType: "text/plain; charset=utf-8",
+			},
+		},
+		{
+			name:   "negative test #5 - unknown metric name",
+			url:    "/value/gauge/SomeName",
+			method: http.MethodGet,
+			want: want{
+				code:        404,
+				response:    "metric not found\n",
+				contentType: "text/plain; charset=utf-8",
+			},
+		},
+		{
+			name:   "negative test #6 - invalid method",
+			url:    "/value/gauge/Alloc",
+			method: http.MethodPost,
+			want: want{
+				code:        405,
+				response:    "",
+				contentType: "",
+			},
+		},
+	}
+	repo := repository.NewMemStorage()
+	err := repo.Save(models.Metrics{
+		MType: models.Gauge,
+		ID:    "Alloc",
+		Value: func(v float64) *float64 { return &v }(1.000001),
+	})
+	require.NoError(t, err)
+	err = repo.Save(models.Metrics{
+		MType: models.Counter,
+		ID:    "PollCount",
+		Delta: func(v int64) *int64 { return &v }(100),
+	})
+	require.NoError(t, err)
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			request := httptest.NewRequest(test.method, test.url, nil)
+			// создаём новый Recorder
+			w := httptest.NewRecorder()
+
+			h := NewHandler(repo)
+
+			r := chi.NewRouter()
+			r.Route("/", func(r chi.Router) {
+				r.Get("/", h.ListAllMetricsHandler)
+				r.Get("/value/{metricType}/{metricName}", h.ValueHandler)
+				r.Post("/update/{metricType}/{metricName}/{metricValue}", h.UpdateHandler)
+			})
+
+			r.ServeHTTP(w, request)
+
+			res := w.Result()
+			// проверяем код ответа
+			assert.Equal(t, test.want.code, res.StatusCode)
+			// получаем и проверяем тело запроса
+			defer res.Body.Close()
+			resBody, err := io.ReadAll(res.Body)
+
+			require.NoError(t, err)
+			assert.Equal(t, test.want.response, string(resBody))
+			assert.Equal(t, test.want.contentType, res.Header.Get("Content-Type"))
+		})
+	}
+}
+
+func Test_generateMetricsText(t *testing.T) {
+	type args struct {
+		metrics []models.Metrics
+	}
+	tests := []struct {
+		name string
+		args args
+		want string
+	}{
+		{
+			name: "positive test #1",
+			args: args{
+				metrics: []models.Metrics{
+					{
+						MType: models.Gauge,
+						ID:    "Alloc",
+						Value: func(v float64) *float64 { return &v }(1.000001),
+					},
+					{
+						MType: models.Counter,
+						ID:    "PollCount",
+						Delta: func(v int64) *int64 { return &v }(100),
+					},
+					{
+						MType: "InvalidMetricType",
+						ID:    "SomeName",
+						Delta: func(v int64) *int64 { return &v }(100),
+						Value: func(v float64) *float64 { return &v }(1.000001),
+					},
+					{
+						MType: models.Gauge,
+						ID:    "withoutGaugeValue",
+						Value: nil,
+					},
+					{
+						MType: models.Gauge,
+						ID:    "withoutCounterValue",
+						Delta: nil,
+					},
+				},
+			},
+			want: "Alloc - 1.000001\nPollCount - 100\nSomeName - unknown\nwithoutCounterValue - NaN\nwithoutGaugeValue - NaN\n",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equalf(t, tt.want, generateMetricsText(tt.args.metrics), "generateMetricsText(%v)", tt.args.metrics)
+		})
+	}
+}
+
+func TestHandler_ListAllMetricsHandler(t *testing.T) {
+	var err error
+	repo := repository.NewMemStorage()
+	for _, metric := range []models.Metrics{
+		{
+			MType: models.Gauge,
+			ID:    "Alloc",
+			Value: func(v float64) *float64 { return &v }(1.000001),
+		},
+		{
+			MType: models.Counter,
+			ID:    "PollCount",
+			Delta: func(v int64) *int64 { return &v }(100),
+		},
+		{
+			MType: models.Gauge,
+			ID:    "HeapAlloc",
+			Value: func(v float64) *float64 { return &v }(10.1000015),
+		},
+	} {
+		err = repo.Save(metric)
+		require.NoError(t, err)
+	}
+	expectedBody := "Alloc - 1.000001\nHeapAlloc - 10.1000015\nPollCount - 100\n"
+	expectedContentType := "text/html; charset=utf-8"
+
+	t.Run("positive test - get list all metrics", func(t *testing.T) {
+		request := httptest.NewRequest(http.MethodGet, "/", nil)
+		// создаём новый Recorder
+		w := httptest.NewRecorder()
+
+		h := NewHandler(repo)
+
+		r := chi.NewRouter()
+		r.Route("/", func(r chi.Router) {
+			r.Get("/", h.ListAllMetricsHandler)
+			r.Get("/value/{metricType}/{metricName}", h.ValueHandler)
+			r.Post("/update/{metricType}/{metricName}/{metricValue}", h.UpdateHandler)
+		})
+
+		r.ServeHTTP(w, request)
+
+		res := w.Result()
+
+		assert.Equal(t, 200, res.StatusCode)
+
+		defer res.Body.Close()
+		resBody, readErr := io.ReadAll(res.Body)
+
+		require.NoError(t, readErr)
+		assert.Equal(t, expectedBody, string(resBody))
+		assert.Equal(t, expectedContentType, res.Header.Get("Content-Type"))
+	})
 }

@@ -6,11 +6,12 @@ import (
 	"strconv"
 
 	models "github.com/strbnm/metrics/internal/model"
+
+	"github.com/go-resty/resty/v2"
 )
 
 type Sender struct {
-	serverURL string
-	client    *http.Client
+	client *resty.Client
 }
 
 func NewSender(serverURL string) (*Sender, error) {
@@ -19,8 +20,7 @@ func NewSender(serverURL string) (*Sender, error) {
 	}
 
 	return &Sender{
-		serverURL: serverURL,
-		client:    &http.Client{},
+		client: resty.New().SetBaseURL(serverURL),
 	}, nil
 }
 
@@ -46,24 +46,20 @@ func (s *Sender) sendMetric(metric models.Metrics) error {
 		return fmt.Errorf("unknown metric type: %s", metric.MType)
 	}
 
-	url := fmt.Sprintf("%s/update/%s/%s/%s",
-		s.serverURL, metric.MType, metric.ID, valueStr)
-
-	req, err := http.NewRequest(http.MethodPost, url, nil)
+	resp, err := s.client.R().
+		SetPathParams(map[string]string{
+			"metricType":  metric.MType,
+			"metricName":  metric.ID,
+			"metricValue": valueStr,
+		}).
+		SetHeader("Content-Type", "text/plain; charset=utf-8").
+		Post("/update/{metricType}/{metricName}/{metricValue}")
 	if err != nil {
 		return err
 	}
 
-	req.Header.Set("Content-Type", "text/plain; charset=utf-8")
-
-	resp, err := s.client.Do(req)
-	if err != nil {
-		return err
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("server returned status: %d", resp.StatusCode)
+	if resp.StatusCode() != http.StatusOK {
+		return fmt.Errorf("server returned status: %d", resp.StatusCode())
 	}
 
 	return nil
