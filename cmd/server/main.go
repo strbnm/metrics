@@ -11,6 +11,7 @@ import (
 )
 
 func main() {
+	parseFlags()
 	memStorage := repository.NewMemStorage()
 
 	h := handler.NewHandler(memStorage)
@@ -23,5 +24,5 @@ func main() {
 	})
 
 	log.Println("Server is starting on :8080")
-	log.Fatal(http.ListenAndServe(":8080", r))
+	log.Fatal(http.ListenAndServe(flagRunAddr, r))
 }

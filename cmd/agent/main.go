@@ -2,7 +2,6 @@ package main
 
 import (
 	"log"
-	"time"
 
 	"github.com/strbnm/metrics/internal/agent"
 	models "github.com/strbnm/metrics/internal/model"
@@ -10,11 +9,10 @@ import (
 )
 
 func main() {
-	pollInterval := 2 * time.Second
-	reportInterval := 10 * time.Second
-	serverURL := "http://localhost:8080"
+	parseFlags()
+	serverURL := "http://" + flagRunAddr
 
-	collector := service.NewCollector(pollInterval, reportInterval)
+	collector := service.NewCollector(flagPollInterval, flagReportInterval)
 
 	sender, err := agent.NewSender(serverURL)
 	if err != nil {
@@ -22,7 +20,7 @@ func main() {
 	}
 
 	log.Printf("Starting metrics agent: poll every %v, report every %v to %s",
-		pollInterval, reportInterval, serverURL)
+		flagPollInterval, flagReportInterval, serverURL)
 
 	collector.Start(func(metrics []models.Metrics) error {
 		return sender.Send(metrics)
