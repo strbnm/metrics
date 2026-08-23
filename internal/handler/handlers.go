@@ -113,7 +113,7 @@ func (h *Handler) ValueHandler(w http.ResponseWriter, r *http.Request) {
 
 	switch metric.MType {
 	case models.Gauge:
-		fmt.Fprintf(w, "%.6f", *metric.Value)
+		fmt.Fprint(w, *metric.Value)
 	case models.Counter:
 		fmt.Fprint(w, *metric.Delta)
 	}
@@ -131,7 +131,7 @@ func generateMetricsText(metrics []models.Metrics) string {
 		switch metric.MType {
 		case models.Gauge:
 			if metric.Value != nil {
-				valueStr = fmt.Sprintf("%.6f", *metric.Value)
+				valueStr = fmt.Sprint(*metric.Value)
 			} else {
 				valueStr = "NaN"
 			}

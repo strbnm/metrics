@@ -340,7 +340,7 @@ func TestHandler_ListAllMetricsHandler(t *testing.T) {
 		err = repo.Save(metric)
 		require.NoError(t, err)
 	}
-	expectedBody := "Alloc - 1.000001\nHeapAlloc - 10.100001\nPollCount - 100\n"
+	expectedBody := "Alloc - 1.000001\nHeapAlloc - 10.1000015\nPollCount - 100\n"
 	expectedContentType := "text/html; charset=utf-8"
 
 	t.Run("positive test - get list all metrics", func(t *testing.T) {
