@@ -27,7 +27,7 @@ func TestNewSender(t *testing.T) {
 			checkFunc: func(t *testing.T, sender *Sender, err error) {
 				require.NoError(t, err)
 				assert.NotNil(t, sender)
-				assert.Equal(t, "http://localhost:8080", sender.serverURL)
+				assert.Equal(t, "http://localhost:8080", sender.client.BaseURL)
 				assert.NotNil(t, sender.client)
 			},
 		},
@@ -50,7 +50,7 @@ func TestNewSender(t *testing.T) {
 				require.NoError(t, err)
 				assert.NotNil(t, sender)
 				// Конструктор сохраняет строку как есть, включая пробелы
-				assert.Equal(t, " http://localhost:8080 ", sender.serverURL)
+				assert.Equal(t, " http://localhost:8080 ", sender.client.BaseURL)
 				assert.NotNil(t, sender.client)
 			},
 		},
@@ -61,7 +61,7 @@ func TestNewSender(t *testing.T) {
 			checkFunc: func(t *testing.T, sender *Sender, err error) {
 				require.NoError(t, err)
 				assert.NotNil(t, sender)
-				assert.Len(t, sender.serverURL, 1014) // 1000 'a' + 14 символов
+				assert.Len(t, sender.client.BaseURL, 1014) // 1000 'a' + 14 символов
 				assert.NotNil(t, sender.client)
 			},
 		},
@@ -72,7 +72,7 @@ func TestNewSender(t *testing.T) {
 			checkFunc: func(t *testing.T, sender *Sender, err error) {
 				require.NoError(t, err)
 				assert.NotNil(t, sender)
-				assert.Equal(t, "http://user:pass@localhost:8080/path?query=value#fragment", sender.serverURL)
+				assert.Equal(t, "http://user:pass@localhost:8080/path?query=value#fragment", sender.client.BaseURL)
 				assert.NotNil(t, sender.client)
 			},
 		},
@@ -83,7 +83,7 @@ func TestNewSender(t *testing.T) {
 			checkFunc: func(t *testing.T, sender *Sender, err error) {
 				require.NoError(t, err)
 				assert.NotNil(t, sender)
-				assert.Equal(t, "http://192.168.1.1:8080", sender.serverURL)
+				assert.Equal(t, "http://192.168.1.1:8080", sender.client.BaseURL)
 				assert.NotNil(t, sender.client)
 			},
 		},
