@@ -20,7 +20,7 @@ func TestNewMemStorage(t *testing.T) {
 
 // TestMemStorage_Contract — запускаем тесты контракта Repository для MemStorage
 func TestMemStorage_Contract(t *testing.T) {
-	service.testRepositoryContract(t, func() service.Repository {
+	testRepositoryContract(t, func() service.Repository {
 		return NewMemStorage()
 	})
 }

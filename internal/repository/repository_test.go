@@ -1,15 +1,16 @@
-package service
+package repository
 
 import (
 	"testing"
 
 	models "github.com/strbnm/metrics/internal/model"
+	"github.com/strbnm/metrics/internal/service"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
 // Базовый набор тест-кейсов для интерфейса Repository
-func testRepositoryContract(t *testing.T, newRepo func() Repository) {
+func testRepositoryContract(t *testing.T, newRepo func() service.Repository) {
 	t.Run("save and get gauge metric", func(t *testing.T) {
 		repo := newRepo()
 
