@@ -10,19 +10,21 @@ import (
 )
 
 type Collector struct {
-	pollInterval   time.Duration
-	reportInterval time.Duration
-	pollCount      int64
-	lastMetrics    []models.Metrics
-	lastSendTime   time.Time
+	pollInterval      time.Duration
+	reportInterval    time.Duration
+	pollCount         int64
+	lastSentPollCount int64
+	lastMetrics       []models.Metrics
+	lastSendTime      time.Time
 }
 
 func NewCollector(pollInterval, reportInterval time.Duration) *Collector {
 	return &Collector{
-		pollInterval:   pollInterval,
-		reportInterval: reportInterval,
-		pollCount:      0,
-		lastSendTime:   time.Now(),
+		pollInterval:      pollInterval,
+		reportInterval:    reportInterval,
+		pollCount:         0,
+		lastSentPollCount: 0,
+		lastSendTime:      time.Now(),
 	}
 }
 
@@ -41,6 +43,8 @@ func (c *Collector) collectOnce() {
 	runtime.ReadMemStats(&m)
 
 	c.pollCount++
+
+	delta := c.pollCount - c.lastSentPollCount
 
 	metrics := []models.Metrics{
 		{ID: "Alloc", MType: models.Gauge, Value: uint64ToFloat64(m.Alloc)},
@@ -72,7 +76,7 @@ func (c *Collector) collectOnce() {
 		{ID: "TotalAlloc", MType: models.Gauge, Value: uint64ToFloat64(m.TotalAlloc)},
 
 		// Дополнительные метрики
-		{ID: "PollCount", MType: models.Counter, Delta: &c.pollCount},
+		{ID: "PollCount", MType: models.Counter, Delta: &delta},
 		{ID: "RandomValue", MType: models.Gauge, Value: func() *float64 {
 			v := rand.Float64()
 			return &v
@@ -96,7 +100,10 @@ func (c *Collector) Start(sendFunc func([]models.Metrics) error) {
 		if time.Since(c.lastSendTime) >= c.reportInterval {
 			metrics := c.GetLastMetrics()
 			if err := sendFunc(metrics); err != nil {
+
 				fmt.Printf("Failed to send metrics: %v\n", err)
+			} else {
+				c.lastSentPollCount = c.pollCount
 			}
 			c.lastSendTime = time.Now()
 		}
