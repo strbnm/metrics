@@ -124,25 +124,25 @@ func testRepositoryContract(t *testing.T, newRepo func() Repository) {
 	t.Run("update existing gauge_value returns new value", func(t *testing.T) {
 		repo := newRepo()
 
-		old_metric := models.Metrics{
+		oldMetric := models.Metrics{
 			ID:    "Alloc",
 			MType: models.Gauge,
 			Value: func(v float64) *float64 { return &v }(2.5),
 		}
 
-		new_metric := models.Metrics{
+		newMetric := models.Metrics{
 			ID:    "Alloc",
 			MType: models.Gauge,
 			Value: func(v float64) *float64 { return &v }(25.0),
 		}
 
-		err := repo.Save(old_metric)
+		err := repo.Save(oldMetric)
 		require.NoError(t, err)
 
-		err = repo.Save(new_metric)
+		err = repo.Save(newMetric)
 		require.NoError(t, err)
 
-		got, err := repo.Get(new_metric.ID, models.Gauge)
+		got, err := repo.Get(newMetric.ID, models.Gauge)
 		require.NoError(t, err)
 		assert.Equal(t, 25.0, *got.Value)
 	})
@@ -150,25 +150,25 @@ func testRepositoryContract(t *testing.T, newRepo func() Repository) {
 	t.Run("update existing counter returns sum_old_and_new_delta", func(t *testing.T) {
 		repo := newRepo()
 
-		old_metric := models.Metrics{
+		oldMetric := models.Metrics{
 			ID:    "PullCount",
 			MType: models.Counter,
 			Delta: func(v int64) *int64 { return &v }(50),
 		}
 
-		new_metric := models.Metrics{
+		newMetric := models.Metrics{
 			ID:    "PullCount",
 			MType: models.Counter,
 			Delta: func(v int64) *int64 { return &v }(100),
 		}
 
-		err := repo.Save(old_metric)
+		err := repo.Save(oldMetric)
 		require.NoError(t, err)
 
-		err = repo.Save(new_metric)
+		err = repo.Save(newMetric)
 		require.NoError(t, err)
 
-		got, err := repo.Get(new_metric.ID, models.Counter)
+		got, err := repo.Get(newMetric.ID, models.Counter)
 		require.NoError(t, err)
 		assert.Equal(t, int64(150), *got.Delta)
 	})
