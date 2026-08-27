@@ -52,12 +52,8 @@ func validateRunAddr(addr string) error {
 	if port == "" {
 		return fmt.Errorf("port is missing in '%s'", addr)
 	}
-	norm_port, err2 := strconv.Atoi(port)
-	if err2 != nil {
+	if _, err2 := strconv.Atoi(port); err2 != nil {
 		return fmt.Errorf("port must be integer number, got '%s'", addr)
-	}
-	if norm_port < 1024 || norm_port > 65535 {
-		return fmt.Errorf("port must be between 0 and 65535, got '%s'", addr)
 	}
 
 	return nil
