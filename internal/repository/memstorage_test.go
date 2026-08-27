@@ -3,6 +3,7 @@ package repository
 import (
 	"testing"
 
+	"github.com/strbnm/metrics/internal/service"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -19,7 +20,7 @@ func TestNewMemStorage(t *testing.T) {
 
 // TestMemStorage_Contract — запускаем тесты контракта Repository для MemStorage
 func TestMemStorage_Contract(t *testing.T) {
-	testRepositoryContract(t, func() Repository {
+	service.testRepositoryContract(t, func() service.Repository {
 		return NewMemStorage()
 	})
 }

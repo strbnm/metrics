@@ -8,6 +8,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	models "github.com/strbnm/metrics/internal/model"
+	"github.com/strbnm/metrics/internal/service"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
@@ -92,7 +93,7 @@ func TestHandler_UpdateHandler(t *testing.T) {
 			method: http.MethodPost,
 			want: want{
 				code:        400,
-				response:    "Invalid gauge value\n",
+				response:    "Invalid metric value\n",
 				contentType: "text/plain; charset=utf-8",
 			},
 		},
@@ -102,7 +103,7 @@ func TestHandler_UpdateHandler(t *testing.T) {
 			method: http.MethodPost,
 			want: want{
 				code:        400,
-				response:    "Invalid counter value\n",
+				response:    "Invalid metric value\n",
 				contentType: "text/plain; charset=utf-8",
 			},
 		},
@@ -123,7 +124,8 @@ func TestHandler_UpdateHandler(t *testing.T) {
 			// создаём новый Recorder
 			w := httptest.NewRecorder()
 			repo := repository.NewMemStorage()
-			h := NewHandler(repo)
+			srv := service.NewMetricsService(repo)
+			h := NewHandler(srv)
 
 			r := chi.NewRouter()
 			r.Route("/", func(r chi.Router) {
@@ -222,17 +224,10 @@ func TestHandler_ValueHandler(t *testing.T) {
 		},
 	}
 	repo := repository.NewMemStorage()
-	err := repo.Save(models.Metrics{
-		MType: models.Gauge,
-		ID:    "Alloc",
-		Value: func(v float64) *float64 { return &v }(1.000001),
-	})
+	srv := service.NewMetricsService(repo)
+	err := srv.UpdateMetric(models.Gauge, "Alloc", "1.000001")
 	require.NoError(t, err)
-	err = repo.Save(models.Metrics{
-		MType: models.Counter,
-		ID:    "PollCount",
-		Delta: func(v int64) *int64 { return &v }(100),
-	})
+	err = srv.UpdateMetric(models.Counter, "PollCount", "100")
 	require.NoError(t, err)
 
 	for _, test := range tests {
@@ -241,7 +236,7 @@ func TestHandler_ValueHandler(t *testing.T) {
 			// создаём новый Recorder
 			w := httptest.NewRecorder()
 
-			h := NewHandler(repo)
+			h := NewHandler(srv)
 
 			r := chi.NewRouter()
 			r.Route("/", func(r chi.Router) {
@@ -340,6 +335,7 @@ func TestHandler_ListAllMetricsHandler(t *testing.T) {
 		err = repo.Save(metric)
 		require.NoError(t, err)
 	}
+	srv := service.NewMetricsService(repo)
 	expectedBody := "Alloc - 1.000001\nHeapAlloc - 10.1000015\nPollCount - 100\n"
 	expectedContentType := "text/html; charset=utf-8"
 
@@ -348,7 +344,7 @@ func TestHandler_ListAllMetricsHandler(t *testing.T) {
 		// создаём новый Recorder
 		w := httptest.NewRecorder()
 
-		h := NewHandler(repo)
+		h := NewHandler(srv)
 
 		r := chi.NewRouter()
 		r.Route("/", func(r chi.Router) {
