@@ -83,68 +83,114 @@ func TestValidateRunAddr(t *testing.T) {
 
 func TestParseFlags(t *testing.T) {
 	originalArgs := os.Args
-	defer func() { os.Args = originalArgs }() // Восстанавливаем аргументы после теста
+	originalEnv, originalEnvSet := os.LookupEnv("ADDRESS")
+
+	// Восстановление исходного состояния после всех тестов
+	defer func() {
+		os.Args = originalArgs
+		if originalEnvSet {
+			os.Setenv("ADDRESS", originalEnv)
+		} else {
+			os.Unsetenv("ADDRESS")
+		}
+	}()
 
 	tests := []struct {
-		name     string
-		args     []string
-		wantErr  bool
-		expected *Config
+		name         string
+		args         []string
+		envValue     string
+		envSet       bool
+		wantErr      bool
+		expectedAddr string
 	}{
 		{
-			name:    "Default values",
-			args:    []string{"cmd"},
-			wantErr: false,
-			expected: &Config{
-				RunAddr: "localhost:8080",
-			},
+			name:         "Default values (no ENV, no flag)",
+			args:         []string{"cmd"},
+			envSet:       false,
+			wantErr:      false,
+			expectedAddr: "localhost:8080",
 		},
 		{
-			name:    "Custom address",
-			args:    []string{"cmd", "-a", "test:9090"},
-			wantErr: false,
-			expected: &Config{
-				RunAddr: "test:9090",
-			},
+			name:         "Flag overrides default (no ENV)",
+			args:         []string{"cmd", "-a", "custom:9090"},
+			envSet:       false,
+			wantErr:      false,
+			expectedAddr: "custom:9090",
 		},
 		{
-			name:    "IP address",
-			args:    []string{"cmd", "-a", "192.168.1.100:8080"},
-			wantErr: false,
-			expected: &Config{
-				RunAddr: "192.168.1.100:8080",
-			},
+			name:         "ENV overrides flag",
+			args:         []string{"cmd", "-a", "ignored:8000"},
+			envValue:     "env-priority:9999",
+			envSet:       true,
+			wantErr:      false,
+			expectedAddr: "env-priority:9999",
 		},
 		{
-			name:    "Empty address (invalid)",
-			args:    []string{"cmd", "-a", ""},
-			wantErr: true,
+			name:         "Only ENV (no flag)",
+			args:         []string{"cmd"},
+			envValue:     "only-env:5000",
+			envSet:       true,
+			wantErr:      false,
+			expectedAddr: "only-env:5000",
 		},
 		{
-			name:    "Address without port (invalid)",
-			args:    []string{"cmd", "-a", "localhost"},
-			wantErr: true,
+			name:         "Empty ENV string (ignored, flag used)",
+			args:         []string{"cmd", "-a", "flag-value:7000"},
+			envValue:     "",
+			envSet:       true, // ADDRESS="" — установлена, но пустая
+			wantErr:      false,
+			expectedAddr: "flag-value:7000",
 		},
 		{
-			name:    "Invalid format (no colon)",
-			args:    []string{"cmd", "-a", "localhost8080"},
-			wantErr: true,
+			name:         "Empty ENV string (ignored, default used)",
+			args:         []string{"cmd"},
+			envValue:     "",
+			envSet:       true,
+			wantErr:      false,
+			expectedAddr: "localhost:8080",
+		},
+		{
+			name:         "Invalid ENV format (validation fails)",
+			args:         []string{"cmd"},
+			envValue:     "invalid-no-colon",
+			envSet:       true,
+			wantErr:      true,
+			expectedAddr: "",
+		},
+		{
+			name:         "Invalid flag format, but valid ENV",
+			args:         []string{"cmd", "-a", "invalid"},
+			envValue:     "valid-env:8888",
+			envSet:       true,
+			wantErr:      false,
+			expectedAddr: "valid-env:8888",
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			// ОЧИЩАЕМ ФЛАГИ ПЕРЕД КАЖДЫМ ТЕСТОМ
+			// Сброс флагов перед каждым тестом
 			flag.CommandLine = flag.NewFlagSet(os.Args[0], flag.ExitOnError)
+
+			// Установка переменной окружения
+			if tt.envSet {
+				os.Setenv("ADDRESS", tt.envValue)
+			} else {
+				os.Unsetenv("ADDRESS")
+			}
+
 			os.Args = tt.args
+
 			cfg, err := ParseFlags()
 
 			if tt.wantErr {
 				require.Error(t, err, "ParseFlags() должна возвращать ошибку")
+				assert.Nil(t, cfg)
 			} else {
 				require.NoError(t, err, "ParseFlags() не должна возвращать ошибку")
-				assert.Equal(t, tt.expected.RunAddr, cfg.RunAddr,
-					"RunAddr должно совпадать с ожидаемым значением")
+				require.NotNil(t, cfg)
+				assert.Equal(t, tt.expectedAddr, cfg.RunAddr,
+					"RunAddr должно совпадать с ожидаемым")
 			}
 		})
 	}
