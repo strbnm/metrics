@@ -41,6 +41,7 @@ func run() error {
 
 	r.Use(middleware.WithLogging)
 	r.Use(middlewares.StripSlashes)
+	r.Use(middleware.GzipMiddleware)
 
 	r.Route("/", func(r chi.Router) {
 		r.Get("/", h.ListAllMetricsHandler)
