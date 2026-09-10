@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/strbnm/metrics/internal/middleware"
 	models "github.com/strbnm/metrics/internal/model"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -128,7 +129,7 @@ func TestSender_Send(t *testing.T) {
 					Value: func(v float64) *float64 { return &v }(1.0001),
 				},
 			},
-			serverHandler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			serverHandler: middleware.GzipMiddleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				assert.Equal(t, http.MethodPost, r.Method)
 				assert.Equal(t, "/update", r.URL.Path)
 				assert.Equal(t, "application/json; charset=utf-8", r.Header.Get("Content-Type"))
@@ -145,7 +146,7 @@ func TestSender_Send(t *testing.T) {
 
 				w.WriteHeader(http.StatusOK)
 				fmt.Fprint(w, "OK")
-			}),
+			})),
 			wantErr: false,
 		},
 		{
@@ -162,7 +163,7 @@ func TestSender_Send(t *testing.T) {
 					Delta: func(v int64) *int64 { return &v }(100),
 				},
 			},
-			serverHandler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			serverHandler: middleware.GzipMiddleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				assert.Equal(t, http.MethodPost, r.Method)
 				assert.Equal(t, "/update", r.URL.Path)
 				assert.Equal(t, "application/json; charset=utf-8", r.Header.Get("Content-Type"))
@@ -192,7 +193,7 @@ func TestSender_Send(t *testing.T) {
 				default:
 					w.WriteHeader(http.StatusNotFound)
 				}
-			}),
+			})),
 			wantErr: false,
 		},
 		{
@@ -204,9 +205,9 @@ func TestSender_Send(t *testing.T) {
 					Value: func(v float64) *float64 { return &v }(1.0),
 				},
 			},
-			serverHandler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			serverHandler: middleware.GzipMiddleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				w.WriteHeader(http.StatusInternalServerError)
-			}),
+			})),
 			wantErr:     true,
 			errContains: "server returned status: 500",
 		},
@@ -219,9 +220,9 @@ func TestSender_Send(t *testing.T) {
 					Value: func(v float64) *float64 { return &v }(1.0),
 				},
 			},
-			serverHandler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			serverHandler: middleware.GzipMiddleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				http.Error(w, "Client error", http.StatusBadRequest)
-			}),
+			})),
 			wantErr:     true,
 			errContains: "failed to send metric ClientError",
 		},
