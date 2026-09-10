@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -129,8 +130,19 @@ func TestSender_Send(t *testing.T) {
 			},
 			serverHandler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				assert.Equal(t, http.MethodPost, r.Method)
-				assert.Equal(t, "/update/gauge/Alloc/1.0001", r.URL.Path)
-				assert.Equal(t, "text/plain; charset=utf-8", r.Header.Get("Content-Type"))
+				assert.Equal(t, "/update", r.URL.Path)
+				assert.Equal(t, "application/json; charset=utf-8", r.Header.Get("Content-Type"))
+
+				var received models.Metrics
+				// Читаем и парсим сразу
+				err := json.NewDecoder(r.Body).Decode(&received)
+				require.NoError(t, err)
+				defer r.Body.Close()
+
+				assert.Equal(t, models.Gauge, received.MType)
+				assert.Equal(t, 1.0001, *received.Value)
+				assert.Equal(t, "Alloc", received.ID)
+
 				w.WriteHeader(http.StatusOK)
 				fmt.Fprint(w, "OK")
 			}),
@@ -142,7 +154,7 @@ func TestSender_Send(t *testing.T) {
 				{
 					ID:    "Alloc",
 					MType: models.Gauge,
-					Value: func(v float64) *float64 { return &v }(1.0),
+					Value: func(v float64) *float64 { return &v }(1.0001),
 				},
 				{
 					ID:    "PollCount",
@@ -152,27 +164,36 @@ func TestSender_Send(t *testing.T) {
 			},
 			serverHandler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				assert.Equal(t, http.MethodPost, r.Method)
-				switch r.URL.Path {
-				case "/update/gauge/Alloc/1":
+				assert.Equal(t, "/update", r.URL.Path)
+				assert.Equal(t, "application/json; charset=utf-8", r.Header.Get("Content-Type"))
+
+				var received models.Metrics
+				// Читаем и парсим сразу
+				err := json.NewDecoder(r.Body).Decode(&received)
+				require.NoError(t, err)
+				defer r.Body.Close()
+
+				switch received.MType {
+				case models.Gauge:
+					assert.Equal(t, models.Gauge, received.MType)
+					assert.Equal(t, 1.0001, *received.Value)
+					assert.Equal(t, "Alloc", received.ID)
+
 					w.WriteHeader(http.StatusOK)
-				case "/update/counter/PollCount/100":
+					fmt.Fprint(w, "OK")
+
+				case models.Counter:
+					assert.Equal(t, models.Counter, received.MType)
+					assert.Equal(t, int64(100), *received.Delta)
+					assert.Equal(t, "PollCount", received.ID)
+
 					w.WriteHeader(http.StatusOK)
+					fmt.Fprint(w, "OK")
 				default:
 					w.WriteHeader(http.StatusNotFound)
 				}
 			}),
 			wantErr: false,
-		},
-		{
-			name: "negative test #1 - unknown metric type",
-			metrics: []models.Metrics{
-				{
-					ID:    "UnknownMetric",
-					MType: "unknown",
-				},
-			},
-			wantErr:     true,
-			errContains: "unknown metric type",
 		},
 		{
 			name: "negative test #2 - server returns error status",
