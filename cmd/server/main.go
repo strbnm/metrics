@@ -41,6 +41,8 @@ func run() error {
 		r.Get("/", h.ListAllMetricsHandler)
 		r.Get("/value/{metricType}/{metricName}", h.ValueHandler)
 		r.Post("/update/{metricType}/{metricName}/{metricValue}", h.UpdateHandler)
+		r.Post("/update", h.UpdateJSONHandler)
+		r.Post("/value", h.ValueJSONHandler)
 	})
 
 	logger.Log.Infof("Server is starting on %s", cfg.RunAddr)
