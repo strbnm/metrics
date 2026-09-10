@@ -16,6 +16,8 @@ type MetricsService interface {
 	UpdateMetric(metricType, metricName, valueStr string) error
 	ListAllMetrics() ([]models.Metrics, error)
 	GetMetricValue(metricName, metricType string) (string, error)
+	UpdateMetricFromModel(m models.Metrics) error
+	GetMetric(m *models.Metrics) error
 }
 
 type Handler struct {

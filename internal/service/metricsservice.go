@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"strconv"
 
+	"github.com/strbnm/metrics/internal/logger"
 	models "github.com/strbnm/metrics/internal/model"
 )
 
@@ -68,6 +69,42 @@ func (s *MetricsService) GetMetricValue(metricName, metricType string) (string, 
 	default:
 		return "unknown", nil
 	}
+}
+
+func (s *MetricsService) UpdateMetricFromModel(m models.Metrics) error {
+	switch m.MType {
+	case models.Counter:
+		if m.Delta == nil {
+			logger.Log.Debugw("nil metric counter value with MType=counter", "metric", m)
+			return ErrEmptyMetricValue
+		}
+		m.Value = nil
+	case models.Gauge:
+		if m.Value == nil {
+			logger.Log.Debugw("nil metric gauge value with MType=gauge", "metric", m)
+			return ErrEmptyMetricValue
+		}
+		m.Delta = nil
+	}
+	return s.repo.Save(m)
+}
+
+func (s *MetricsService) GetMetric(m *models.Metrics) error {
+	metric, err := s.repo.Get(m.ID, m.MType)
+	if err != nil {
+		return err
+	}
+	switch metric.MType {
+	case models.Gauge:
+		if metric.Value != nil {
+			m.Value = &*metric.Value
+		}
+	case models.Counter:
+		if metric.Delta != nil {
+			m.Delta = &*metric.Delta
+		}
+	}
+	return nil
 }
 
 func NewMetricsService(repo Repository) *MetricsService {
