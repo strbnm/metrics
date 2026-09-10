@@ -4,6 +4,7 @@ import (
 	"flag"
 	"fmt"
 	"net"
+	"os"
 	"strconv"
 	"strings"
 )
@@ -27,6 +28,11 @@ func ParseFlags() (*Config, error) {
 	flag.StringVar(&cfg.RunAddr, "a", cfg.RunAddr, "address and port to run server with format host:port")
 
 	flag.Parse()
+
+	if envAddr, ok := os.LookupEnv("ADDRESS"); ok && envAddr != "" {
+		cfg.RunAddr = envAddr
+	}
+
 	// Валидируем RunAddr
 	if err := validateRunAddr(cfg.RunAddr); err != nil {
 		return nil, err

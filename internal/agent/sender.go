@@ -1,9 +1,11 @@
 package agent
 
 import (
+	"bytes"
+	"compress/gzip"
+	"encoding/json"
 	"fmt"
 	"net/http"
-	"strconv"
 
 	models "github.com/strbnm/metrics/internal/model"
 
@@ -26,7 +28,7 @@ func NewSender(serverURL string) (*Sender, error) {
 
 func (s *Sender) Send(metrics []models.Metrics) error {
 	for _, metric := range metrics {
-		err := s.sendMetric(metric)
+		err := s.sendMetric(&metric)
 		if err != nil {
 			return fmt.Errorf("failed to send metric %s: %w", metric.ID, err)
 		}
@@ -34,26 +36,28 @@ func (s *Sender) Send(metrics []models.Metrics) error {
 	return nil
 }
 
-func (s *Sender) sendMetric(metric models.Metrics) error {
-	var valueStr string
-
-	switch metric.MType {
-	case models.Gauge:
-		valueStr = strconv.FormatFloat(*metric.Value, 'f', -1, 64)
-	case models.Counter:
-		valueStr = strconv.FormatInt(*metric.Delta, 10)
-	default:
-		return fmt.Errorf("unknown metric type: %s", metric.MType)
+func (s *Sender) sendMetric(metric *models.Metrics) error {
+	// 1. Маршалинг структуры в JSON байты
+	data, err := json.Marshal(metric)
+	if err != nil {
+		return fmt.Errorf("failed to marshal metric: %w", err)
 	}
 
+	// 2. Сжатие данных в gzip
+	var buf bytes.Buffer
+	gz := gzip.NewWriter(&buf)
+	_, err = gz.Write(data)
+	if err != nil {
+		gz.Close()
+		return fmt.Errorf("failed to write gzip data: %w", err)
+	}
+	gz.Close() // Важно: закрывает writer и сбрасывает оставшиеся данные в буфер
+
 	resp, err := s.client.R().
-		SetPathParams(map[string]string{
-			"metricType":  metric.MType,
-			"metricName":  metric.ID,
-			"metricValue": valueStr,
-		}).
-		SetHeader("Content-Type", "text/plain; charset=utf-8").
-		Post("/update/{metricType}/{metricName}/{metricValue}")
+		SetBody(buf.Bytes()).
+		SetHeader("Content-Type", "application/json; charset=utf-8").
+		SetHeader("Content-Encoding", "gzip").
+		Post("/update")
 	if err != nil {
 		return err
 	}
