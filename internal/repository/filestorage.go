@@ -59,7 +59,8 @@ func (r *FileStorage) Load() error {
 
 	metrics := make(map[string]models.Metrics, len(loaded))
 	for _, metric := range loaded {
-		metrics[metric.ID] = metric
+		key := buildKey(metric.ID, metric.MType)
+		metrics[key] = metric
 	}
 	r.MemStorage.metrics = metrics
 	logger.Log.Debugf("loaded %d metrics", len(loaded))

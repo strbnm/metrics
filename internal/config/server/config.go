@@ -26,7 +26,7 @@ func NewServerConfig() *Config {
 	return &Config{
 		RunAddr: "localhost:8080",
 		Store: StoreConfig{
-			StoreInterval:   0 * time.Second,
+			StoreInterval:   300 * time.Second,
 			FileStoragePath: "metrics.json",
 			Restore:         true,
 		},
