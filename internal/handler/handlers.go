@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
@@ -8,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/strbnm/metrics/internal/logger"
 	"github.com/strbnm/metrics/internal/model"
 	"github.com/strbnm/metrics/internal/service"
 )
@@ -16,6 +18,8 @@ type MetricsService interface {
 	UpdateMetric(metricType, metricName, valueStr string) error
 	ListAllMetrics() ([]models.Metrics, error)
 	GetMetricValue(metricName, metricType string) (string, error)
+	UpdateMetricFromModel(m models.Metrics) error
+	GetMetric(m *models.Metrics) error
 }
 
 type Handler struct {
@@ -124,4 +128,52 @@ func generateMetricsText(metrics []models.Metrics) string {
 	}
 
 	return sb.String()
+}
+
+func (h *Handler) UpdateJSONHandler(w http.ResponseWriter, r *http.Request) {
+	var metric models.Metrics
+
+	if err := json.NewDecoder(r.Body).Decode(&metric); err != nil {
+		logger.Log.Debugw("Error decoding JSON", "error", err)
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	err := h.service.UpdateMetricFromModel(metric)
+	if err != nil {
+		switch {
+		case errors.Is(err, service.ErrEmptyMetricValue):
+			http.Error(w, "Metric value is required", http.StatusBadRequest)
+		default:
+			fmt.Printf("Error update metric: %s", err)
+			http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
+		}
+		return
+	}
+
+	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+	w.WriteHeader(http.StatusOK)
+	fmt.Fprint(w, "OK")
+}
+
+func (h *Handler) ValueJSONHandler(w http.ResponseWriter, r *http.Request) {
+	var m models.Metrics
+
+	if err := json.NewDecoder(r.Body).Decode(&m); err != nil {
+		logger.Log.Debugw("Error decoding JSON", "error", err)
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	err := h.service.GetMetric(&m)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusNotFound)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	err = json.NewEncoder(w).Encode(m)
+	if err != nil {
+		return
+	}
 }
