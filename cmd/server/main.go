@@ -12,6 +12,8 @@ import (
 	"github.com/strbnm/metrics/internal/service"
 
 	"github.com/go-chi/chi/v5"
+
+	middlewares "github.com/go-chi/chi/v5/middleware"
 )
 
 func main() {
@@ -36,7 +38,10 @@ func run() error {
 	h := handler.NewHandler(metricsService)
 
 	r := chi.NewRouter()
+
 	r.Use(middleware.WithLogging)
+	r.Use(middlewares.StripSlashes)
+
 	r.Route("/", func(r chi.Router) {
 		r.Get("/", h.ListAllMetricsHandler)
 		r.Get("/value/{metricType}/{metricName}", h.ValueHandler)
