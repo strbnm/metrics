@@ -97,11 +97,11 @@ func (s *MetricsService) GetMetric(m *models.Metrics) error {
 	switch metric.MType {
 	case models.Gauge:
 		if metric.Value != nil {
-			m.Value = &*metric.Value
+			m.Value = metric.Value
 		}
 	case models.Counter:
 		if metric.Delta != nil {
-			m.Delta = &*metric.Delta
+			m.Delta = metric.Delta
 		}
 	}
 	return nil
