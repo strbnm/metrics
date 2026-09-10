@@ -79,7 +79,7 @@ func TestMetrics_UnmarshalJSON(t *testing.T) {
 			wantErr: true,
 			check: func(t *testing.T, m Metrics, err error) {
 				require.Error(t, err)
-				assert.Contains(t, err.Error(), `field "type": invalid valu ""`)
+				assert.Contains(t, err.Error(), `field "type": invalid value ""`)
 			},
 		},
 		{
