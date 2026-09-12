@@ -40,12 +40,7 @@ func gunzipData(t *testing.T, data []byte) []byte {
 
 func TestCompressWriter_Write_SetsContentEncoding(t *testing.T) {
 	rec := httptest.NewRecorder()
-	cw := newCompressWriter(rec,
-		map[string]bool{
-			"application/json": true,
-			"text/html":        true,
-		},
-	)
+	cw := newCompressWriter(rec)
 
 	cw.Header().Set("Content-Type", "text/html")
 
@@ -76,12 +71,7 @@ func TestCompressWriter_WriteHeader_SetsEncodingForSuccessCodes(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			rec := httptest.NewRecorder()
-			cw := newCompressWriter(rec,
-				map[string]bool{
-					"application/json": true,
-					"text/html":        true,
-				},
-			)
+			cw := newCompressWriter(rec)
 			cw.Header().Set("Content-Type", tt.contentType)
 			cw.WriteHeader(tt.statusCode)
 			require.NoError(t, cw.Close())
