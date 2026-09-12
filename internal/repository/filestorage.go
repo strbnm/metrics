@@ -18,12 +18,21 @@ type FileStorage struct {
 	isSyncFlush bool
 }
 
-func NewFileStorage(fileName string, isSyncFlush bool) *FileStorage {
-	return &FileStorage{
+func NewFileStorage(fileName string, isSyncFlush, restore bool) *FileStorage {
+	fileStorage := &FileStorage{
 		MemStorage:  NewMemStorage(),
 		fileName:    fileName,
 		isSyncFlush: isSyncFlush,
 	}
+	// Загрузка из файла если restore == true
+	if restore {
+		if err := fileStorage.Load(); err != nil {
+			logger.Log.Errorf("failed to load metrics: %v", err)
+		} else {
+			logger.Log.Infow("metrics restored from file", "filename", fileName)
+		}
+	}
+	return fileStorage
 }
 
 func (r *FileStorage) Save(metric models.Metrics) error {
@@ -32,19 +41,24 @@ func (r *FileStorage) Save(metric models.Metrics) error {
 		return err
 	}
 	if r.isSyncFlush {
-		_ = r.Flush()
+		err = r.Flush()
+		if err != nil {
+			return err
+		}
 	}
 	return nil
 }
 
 func (r *FileStorage) Load() error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
 
 	file, err := os.Open(r.fileName)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
 			return nil // файла нет — это нормально при первом запуске
 		}
-		return fmt.Errorf("open file: %w", err)
+		return fmt.Errorf("repository: open file: %w", err)
 	}
 	defer file.Close()
 
@@ -54,7 +68,7 @@ func (r *FileStorage) Load() error {
 		if errors.Is(err, io.EOF) {
 			return nil // пустой файл — ничего не загружаем
 		}
-		return fmt.Errorf("decode metrics: %w", err)
+		return fmt.Errorf("repository: decode metrics: %w", err)
 	}
 
 	metrics := make(map[string]models.Metrics, len(loaded))
@@ -68,27 +82,25 @@ func (r *FileStorage) Load() error {
 }
 
 func (r *FileStorage) Flush() error {
-
-	// Преобразуем map в массив
-	listMetrics := make([]models.Metrics, 0, len(r.MemStorage.metrics))
-	for _, metric := range r.MemStorage.metrics {
-		listMetrics = append(listMetrics, metric)
+	listMetrics, err := r.MemStorage.List()
+	if err != nil {
+		return err
 	}
 	sort.Slice(listMetrics, func(i, j int) bool {
 		return listMetrics[i].ID < listMetrics[j].ID
 	})
 	data, err := json.MarshalIndent(listMetrics, "", "  ")
 	if err != nil {
-		return fmt.Errorf("marshal metrics: %w", err)
+		return fmt.Errorf("repository: error marshal metrics: %w", err)
 	}
 
 	// Пишем во временный файл, затем переименовываем — атомарно
 	tmpPath := r.fileName + ".tmp"
 	if errWrite := os.WriteFile(tmpPath, data, 0644); errWrite != nil {
-		return fmt.Errorf("write temp file: %w", errWrite)
+		return fmt.Errorf("repository: write temp file: %w", errWrite)
 	}
 	if errRename := os.Rename(tmpPath, r.fileName); errRename != nil {
-		return fmt.Errorf("rename temp file: %w", errRename)
+		return fmt.Errorf("repository: rename temp file: %w", errRename)
 	}
 
 	return nil

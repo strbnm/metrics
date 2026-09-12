@@ -38,18 +38,8 @@ func run() error {
 	}
 
 	isSyncFlush := cfg.Store.StoreInterval/time.Second == 0
-	fileStorage := repository.NewFileStorage(cfg.Store.FileStoragePath, isSyncFlush)
+	fileStorage := repository.NewFileStorage(cfg.Store.FileStoragePath, isSyncFlush, cfg.Store.Restore)
 	metricsService := service.NewMetricsService(fileStorage)
-
-	// Загрузка из файла при старте
-	if cfg.Store.Restore {
-		if err = fileStorage.Load(); err != nil {
-			logger.Log.Errorf("failed to load metrics: %v", err)
-		} else {
-			logger.Log.Infow("metrics restored from file",
-				"filename", cfg.Store.FileStoragePath)
-		}
-	}
 
 	ctx, stop := signal.NotifyContext(context.Background(),
 		syscall.SIGINT, syscall.SIGTERM)
