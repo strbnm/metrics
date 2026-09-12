@@ -6,11 +6,6 @@ import (
 )
 
 func GzipMiddleware(h http.Handler) http.Handler {
-	allowedTypes := map[string]bool{
-		"application/json": true,
-		"text/html":        true,
-	}
-
 	gzipFn := func(w http.ResponseWriter, r *http.Request) {
 		// по умолчанию устанавливаем оригинальный http.ResponseWriter как тот,
 		// который будем передавать следующей функции
@@ -21,7 +16,7 @@ func GzipMiddleware(h http.Handler) http.Handler {
 		supportsGzip := strings.Contains(acceptEncoding, "gzip")
 		if supportsGzip {
 			// оборачиваем оригинальный http.ResponseWriter новым с поддержкой сжатия
-			cw := newCompressWriter(w, allowedTypes)
+			cw := newCompressWriter(w)
 			// меняем оригинальный http.ResponseWriter на новый
 			ow = cw
 			// не забываем отправить клиенту все сжатые данные после завершения middleware

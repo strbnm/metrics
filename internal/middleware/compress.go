@@ -4,24 +4,24 @@ import (
 	"compress/gzip"
 	"io"
 	"net/http"
-	"strings"
+
+	"github.com/strbnm/metrics/internal/compress"
 )
 
 // compressWriter реализует интерфейс http.ResponseWriter и позволяет прозрачно для сервера
 // сжимать передаваемые данные и выставлять правильные HTTP-заголовки
 type compressWriter struct {
-	w            http.ResponseWriter
-	zw           *gzip.Writer
-	allowedTypes map[string]bool
-	compress     bool // Флаг: сжимать или нет
-	checked      bool // Флаг: уже проверили Content-Type
+	w        http.ResponseWriter
+	zw       *gzip.Writer
+	compress bool // Флаг: сжимать или нет
+	checked  bool // Флаг: уже проверили Content-Type
 }
 
-func newCompressWriter(w http.ResponseWriter, allowed map[string]bool) *compressWriter {
+func newCompressWriter(w http.ResponseWriter) *compressWriter {
+	zw, _ := compress.NewWriter(w) // уровень сжатия из общего пакета
 	return &compressWriter{
-		w:            w,
-		zw:           gzip.NewWriter(w),
-		allowedTypes: allowed,
+		w:  w,
+		zw: zw,
 	}
 }
 
@@ -31,14 +31,7 @@ func (c *compressWriter) checkContentType() {
 		return
 	}
 	c.checked = true
-
-	ct := c.w.Header().Get("Content-Type")
-	// отсекаем параметры: "application/json; charset=utf-8" → "application/json"
-	if idx := strings.Index(ct, ";"); idx != -1 {
-		ct = ct[:idx]
-	}
-	ct = strings.TrimSpace(ct)
-	c.compress = c.allowedTypes[ct]
+	c.compress = compress.IsCompressible(c.w.Header().Get("Content-Type"))
 }
 
 func (c *compressWriter) Header() http.Header {
@@ -79,7 +72,7 @@ type compressReader struct {
 }
 
 func newCompressReader(r io.ReadCloser) (*compressReader, error) {
-	zr, err := gzip.NewReader(r)
+	zr, err := compress.NewReader(r)
 	if err != nil {
 		return nil, err
 	}

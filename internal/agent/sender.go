@@ -1,12 +1,11 @@
 package agent
 
 import (
-	"bytes"
-	"compress/gzip"
 	"encoding/json"
 	"fmt"
 	"net/http"
 
+	"github.com/strbnm/metrics/internal/compress"
 	models "github.com/strbnm/metrics/internal/model"
 
 	"github.com/go-resty/resty/v2"
@@ -43,18 +42,13 @@ func (s *Sender) sendMetric(metric *models.Metrics) error {
 		return fmt.Errorf("failed to marshal metric: %w", err)
 	}
 
-	// 2. Сжатие данных в gzip
-	var buf bytes.Buffer
-	gz := gzip.NewWriter(&buf)
-	_, err = gz.Write(data)
+	compressed, err := compress.Compress(data)
 	if err != nil {
-		gz.Close()
-		return fmt.Errorf("failed to write gzip data: %w", err)
+		return fmt.Errorf("failed to compress metric: %w", err)
 	}
-	gz.Close() // Важно: закрывает writer и сбрасывает оставшиеся данные в буфер
 
 	resp, err := s.client.R().
-		SetBody(buf.Bytes()).
+		SetBody(compressed).
 		SetHeader("Content-Type", "application/json; charset=utf-8").
 		SetHeader("Accept-Encoding", "gzip").
 		SetHeader("Content-Encoding", "gzip").
