@@ -87,7 +87,7 @@ func TestWithLogging(t *testing.T) {
 	)
 	rec := httptest.NewRecorder()
 
-	middleware := WithLogging(handler)
+	middleware := WithLogging(logger.Log)(handler)
 	middleware.ServeHTTP(rec, req)
 
 	require.Equal(t, http.StatusCreated, rec.Code)

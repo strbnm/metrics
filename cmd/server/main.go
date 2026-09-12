@@ -35,7 +35,7 @@ func main() {
 func run() error {
 	cfg, err := config.ParseFlags()
 	if err != nil {
-		return fmt.Errorf("configuration parsing failed %w", err)
+		return fmt.Errorf("main: configuration parsing failed %w", err)
 	}
 
 	isSyncFlush := cfg.Store.StoreInterval == 0
@@ -56,7 +56,7 @@ func run() error {
 	r := chi.NewRouter()
 	r.Use(middlewares.StripSlashes)
 	r.Use(middleware.GzipMiddleware)
-	r.Use(middleware.WithLogging)
+	r.Use(middleware.WithLogging(logger.Log))
 
 	r.Route("/", func(r chi.Router) {
 		r.Get("/", h.ListAllMetricsHandler)
