@@ -3,7 +3,9 @@ package main
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/http"
+	"os"
 	"os/signal"
 	"syscall"
 	"time"
@@ -26,18 +28,17 @@ func main() {
 
 	if err := run(); err != nil {
 		logger.Log.Errorf("server error %v", err)
-		panic(err)
+		os.Exit(1)
 	}
 }
 
 func run() error {
 	cfg, err := config.ParseFlags()
 	if err != nil {
-		logger.Log.Errorf("Configuration parsing failed: %v", err)
-		return errors.New("configuration parsing failed")
+		return fmt.Errorf("configuration parsing failed %w", err)
 	}
 
-	isSyncFlush := cfg.Store.StoreInterval/time.Second == 0
+	isSyncFlush := cfg.Store.StoreInterval == 0
 	fileStorage := repository.NewFileStorage(cfg.Store.FileStoragePath, isSyncFlush, cfg.Store.Restore)
 	metricsService := service.NewMetricsService(fileStorage)
 
