@@ -65,10 +65,10 @@ func (r *FileStorage) Load() error {
 	var loaded []models.Metrics
 	decoder := json.NewDecoder(file)
 	if errDecode := decoder.Decode(&loaded); errDecode != nil {
-		if errors.Is(err, io.EOF) {
+		if errors.Is(errDecode, io.EOF) {
 			return nil // пустой файл — ничего не загружаем
 		}
-		return fmt.Errorf("repository: decode metrics: %w", err)
+		return fmt.Errorf("repository: decode metrics: %w", errDecode)
 	}
 
 	metrics := make(map[string]models.Metrics, len(loaded))
