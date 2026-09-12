@@ -56,6 +56,7 @@ func (s *Sender) sendMetric(metric *models.Metrics) error {
 	resp, err := s.client.R().
 		SetBody(buf.Bytes()).
 		SetHeader("Content-Type", "application/json; charset=utf-8").
+		SetHeader("Accept-Encoding", "gzip").
 		SetHeader("Content-Encoding", "gzip").
 		Post("/update")
 	if err != nil {
