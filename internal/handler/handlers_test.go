@@ -15,6 +15,7 @@ import (
 	"github.com/strbnm/metrics/internal/service"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.uber.org/zap"
 
 	"github.com/strbnm/metrics/internal/repository"
 )
@@ -128,8 +129,9 @@ func TestHandler_UpdateHandler(t *testing.T) {
 			// создаём новый Recorder
 			w := httptest.NewRecorder()
 			repo := repository.NewMemStorage()
-			srv := service.NewMetricsService(repo)
-			h := NewHandler(srv)
+			testLogger := zap.NewNop().Sugar()
+			srv := service.NewMetricsService(repo, testLogger)
+			h := NewHandler(srv, testLogger)
 
 			r := chi.NewRouter()
 			r.Route("/", func(r chi.Router) {
@@ -228,7 +230,8 @@ func TestHandler_ValueHandler(t *testing.T) {
 		},
 	}
 	repo := repository.NewMemStorage()
-	srv := service.NewMetricsService(repo)
+	testLogger := zap.NewNop().Sugar()
+	srv := service.NewMetricsService(repo, testLogger)
 	err := srv.UpdateMetric(models.Gauge, "Alloc", "1.000001")
 	require.NoError(t, err)
 	err = srv.UpdateMetric(models.Counter, "PollCount", "100")
@@ -240,7 +243,7 @@ func TestHandler_ValueHandler(t *testing.T) {
 			// создаём новый Recorder
 			w := httptest.NewRecorder()
 
-			h := NewHandler(srv)
+			h := NewHandler(srv, testLogger)
 
 			r := chi.NewRouter()
 			r.Route("/", func(r chi.Router) {
@@ -339,7 +342,8 @@ func TestHandler_ListAllMetricsHandler(t *testing.T) {
 		err = repo.Save(metric)
 		require.NoError(t, err)
 	}
-	srv := service.NewMetricsService(repo)
+	testLogger := zap.NewNop().Sugar()
+	srv := service.NewMetricsService(repo, testLogger)
 	expectedBody := "Alloc - 1.000001\nHeapAlloc - 10.1000015\nPollCount - 100\n"
 	expectedContentType := "text/html; charset=utf-8"
 
@@ -348,7 +352,7 @@ func TestHandler_ListAllMetricsHandler(t *testing.T) {
 		// создаём новый Recorder
 		w := httptest.NewRecorder()
 
-		h := NewHandler(srv)
+		h := NewHandler(srv, testLogger)
 
 		r := chi.NewRouter()
 		r.Route("/", func(r chi.Router) {
@@ -511,8 +515,9 @@ func TestHandler_UpdateJSONHandler(t *testing.T) {
 			// создаём новый Recorder
 			w := httptest.NewRecorder()
 			repo := repository.NewMemStorage()
-			srv := service.NewMetricsService(repo)
-			h := NewHandler(srv)
+			testLogger := zap.NewNop().Sugar()
+			srv := service.NewMetricsService(repo, testLogger)
+			h := NewHandler(srv, testLogger)
 
 			r := chi.NewRouter()
 			r.Route("/", func(r chi.Router) {
@@ -625,7 +630,8 @@ func TestHandler_ValueJSONHandler(t *testing.T) {
 		},
 	}
 	repo := repository.NewMemStorage()
-	srv := service.NewMetricsService(repo)
+	testLogger := zap.NewNop().Sugar()
+	srv := service.NewMetricsService(repo, testLogger)
 	err := srv.UpdateMetric(testGaugeMetric.MType, testGaugeMetric.ID, fmt.Sprint(*testGaugeMetric.Value))
 	require.NoError(t, err)
 	err = srv.UpdateMetric(testCounterMetric.MType, testCounterMetric.ID, fmt.Sprint(*testCounterMetric.Delta))
@@ -637,7 +643,7 @@ func TestHandler_ValueJSONHandler(t *testing.T) {
 			// создаём новый Recorder
 			w := httptest.NewRecorder()
 
-			h := NewHandler(srv)
+			h := NewHandler(srv, testLogger)
 
 			r := chi.NewRouter()
 			r.Route("/", func(r chi.Router) {
