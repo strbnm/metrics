@@ -64,8 +64,12 @@ func ParseFlags() (*Config, error) {
 
 	if envRestore, ok := os.LookupEnv("RESTORE"); ok && envRestore != "" {
 		envRestore = strings.TrimSpace(envRestore)
-		if envRestore == "true" {
+		fmt.Println(envRestore)
+		switch envRestore {
+		case "true":
 			cfg.Store.Restore = true
+		case "false":
+			cfg.Store.Restore = false
 		}
 	}
 

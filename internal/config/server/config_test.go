@@ -4,6 +4,7 @@ import (
 	"flag"
 	"os"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -83,100 +84,257 @@ func TestValidateRunAddr(t *testing.T) {
 
 func TestParseFlags(t *testing.T) {
 	originalArgs := os.Args
-	originalEnv, originalEnvSet := os.LookupEnv("ADDRESS")
-
-	// Восстановление исходного состояния после всех тестов
-	defer func() {
-		os.Args = originalArgs
-		if originalEnvSet {
-			os.Setenv("ADDRESS", originalEnv)
-		} else {
-			os.Unsetenv("ADDRESS")
-		}
-	}()
+	defer func() { os.Args = originalArgs }()
 
 	tests := []struct {
-		name         string
-		args         []string
-		envValue     string
-		envSet       bool
-		wantErr      bool
-		expectedAddr string
+		name     string
+		args     []string
+		env      map[string]string
+		wantErr  bool
+		expected *Config
 	}{
 		{
-			name:         "Default values (no ENV, no flag)",
-			args:         []string{"cmd"},
-			envSet:       false,
-			wantErr:      false,
-			expectedAddr: "localhost:8080",
+			name:    "Default values (no args, no env)",
+			args:    []string{"cmd"},
+			env:     nil,
+			wantErr: false,
+			expected: &Config{
+				RunAddr: "localhost:8080",
+				Store: StoreConfig{
+					StoreInterval:   300 * time.Second,
+					FileStoragePath: "metrics.json",
+					Restore:         true,
+				},
+			},
 		},
 		{
-			name:         "Flag overrides default (no ENV)",
-			args:         []string{"cmd", "-a", "custom:9090"},
-			envSet:       false,
-			wantErr:      false,
-			expectedAddr: "custom:9090",
+			name:    "Custom server address via flag (env not set)",
+			args:    []string{"cmd", "-a", "test:9090"},
+			env:     nil,
+			wantErr: false,
+			expected: &Config{
+				RunAddr: "test:9090",
+				Store: StoreConfig{
+					StoreInterval:   300 * time.Second,
+					FileStoragePath: "metrics.json",
+					Restore:         true,
+				},
+			},
 		},
 		{
-			name:         "ENV overrides flag",
-			args:         []string{"cmd", "-a", "ignored:8000"},
-			envValue:     "env-priority:9999",
-			envSet:       true,
-			wantErr:      false,
-			expectedAddr: "env-priority:9999",
+			name:    "Custom store interval via flags (env not set)",
+			args:    []string{"cmd", "-i", "5"},
+			env:     nil,
+			wantErr: false,
+			expected: &Config{
+				RunAddr: "localhost:8080",
+				Store: StoreConfig{
+					StoreInterval:   5 * time.Second,
+					FileStoragePath: "metrics.json",
+					Restore:         true,
+				},
+			},
 		},
 		{
-			name:         "Only ENV (no flag)",
-			args:         []string{"cmd"},
-			envValue:     "only-env:5000",
-			envSet:       true,
-			wantErr:      false,
-			expectedAddr: "only-env:5000",
+			name:    "Custom file path via flags (env not set)",
+			args:    []string{"cmd", "-f", "test_metrics.json"},
+			env:     nil,
+			wantErr: false,
+			expected: &Config{
+				RunAddr: "localhost:8080",
+				Store: StoreConfig{
+					StoreInterval:   300 * time.Second,
+					FileStoragePath: "test_metrics.json",
+					Restore:         true,
+				},
+			},
 		},
 		{
-			name:         "Empty ENV string (ignored, flag used)",
-			args:         []string{"cmd", "-a", "flag-value:7000"},
-			envValue:     "",
-			envSet:       true, // ADDRESS="" — установлена, но пустая
-			wantErr:      false,
-			expectedAddr: "flag-value:7000",
+			name:    "Custom restore flag (true) via flags (env not set)",
+			args:    []string{"cmd", "-r=true"},
+			env:     nil,
+			wantErr: false,
+			expected: &Config{
+				RunAddr: "localhost:8080",
+				Store: StoreConfig{
+					StoreInterval:   300 * time.Second,
+					FileStoragePath: "metrics.json",
+					Restore:         true,
+				},
+			},
 		},
 		{
-			name:         "Empty ENV string (ignored, default used)",
-			args:         []string{"cmd"},
-			envValue:     "",
-			envSet:       true,
-			wantErr:      false,
-			expectedAddr: "localhost:8080",
+			name:    "Custom restore flag (false) via flags (env not set)",
+			args:    []string{"cmd", "-r=false"},
+			env:     nil,
+			wantErr: false,
+			expected: &Config{
+				RunAddr: "localhost:8080",
+				Store: StoreConfig{
+					StoreInterval:   300 * time.Second,
+					FileStoragePath: "metrics.json",
+					Restore:         false,
+				},
+			},
 		},
 		{
-			name:         "Invalid ENV format (validation fails)",
-			args:         []string{"cmd"},
-			envValue:     "invalid-no-colon",
-			envSet:       true,
-			wantErr:      true,
-			expectedAddr: "",
+			name: "Env overrides flag for server address",
+			args: []string{"cmd", "-a", "flag-addr:8000"},
+			env: map[string]string{
+				"ADDRESS": "env-addr:9000",
+			},
+			wantErr: false,
+			expected: &Config{
+				RunAddr: "env-addr:9000",
+				Store: StoreConfig{
+					StoreInterval:   300 * time.Second,
+					FileStoragePath: "metrics.json",
+					Restore:         true,
+				},
+			},
 		},
 		{
-			name:         "Invalid flag format, but valid ENV",
-			args:         []string{"cmd", "-a", "invalid"},
-			envValue:     "valid-env:8888",
-			envSet:       true,
-			wantErr:      false,
-			expectedAddr: "valid-env:8888",
+			name: "Env overrides flags for store interval",
+			args: []string{"cmd", "-i", "10"},
+			env: map[string]string{
+				"STORE_INTERVAL": "30",
+			},
+			wantErr: false,
+			expected: &Config{
+				RunAddr: "localhost:8080",
+				Store: StoreConfig{
+					StoreInterval:   30 * time.Second,
+					FileStoragePath: "metrics.json",
+					Restore:         true,
+				},
+			},
+		},
+		{
+			name: "Env overrides flags for file storage path",
+			args: []string{"cmd", "-f", "flag_metrics.json"},
+			env: map[string]string{
+				"FILE_STORAGE_PATH": "env_metrics.json",
+			},
+			wantErr: false,
+			expected: &Config{
+				RunAddr: "localhost:8080",
+				Store: StoreConfig{
+					StoreInterval:   300 * time.Second,
+					FileStoragePath: "env_metrics.json",
+					Restore:         true,
+				},
+			},
+		},
+		{
+			name: "Env overrides flags for restore",
+			args: []string{"cmd", "-r=true"},
+			env: map[string]string{
+				"RESTORE": "false",
+			},
+			wantErr: false,
+			expected: &Config{
+				RunAddr: "localhost:8080",
+				Store: StoreConfig{
+					StoreInterval:   300 * time.Second,
+					FileStoragePath: "metrics.json",
+					Restore:         false,
+				},
+			},
+		},
+		{
+			name: "Env overrides flags for restore",
+			args: []string{"cmd", "-r=false"},
+			env: map[string]string{
+				"RESTORE": "true",
+			},
+			wantErr: false,
+			expected: &Config{
+				RunAddr: "localhost:8080",
+				Store: StoreConfig{
+					StoreInterval:   300 * time.Second,
+					FileStoragePath: "metrics.json",
+					Restore:         true,
+				},
+			},
+		},
+		{
+			name: "Invalid env value for STORE_INTERVAL (fallback to flag)",
+			args: []string{"cmd", "-i", "10"},
+			env: map[string]string{
+				"STORE_INTERVAL": "not-a-number",
+			},
+			wantErr: false, // ошибка в env не должна ломать парсинг — используется флаг
+			expected: &Config{
+				RunAddr: "localhost:8080",
+				Store: StoreConfig{
+					StoreInterval:   10 * time.Second,
+					FileStoragePath: "metrics.json",
+					Restore:         true,
+				},
+			},
+		},
+		{
+			name: "Invalid env value for STORE_INTERVAL (fallback to default)",
+			args: []string{"cmd"}, // нет флага -i
+			env: map[string]string{
+				"STORE_INTERVAL": "-5", // отрицательное значение, но сначала проверим парсинг
+			},
+			wantErr: true, // applyAndValidateIntervals должен вернуть ошибку из-за отрицательного значения
+		},
+		{
+			name:    "Negative interval via flag (validation fails)",
+			args:    []string{"cmd", "-i", "-1"},
+			env:     nil,
+			wantErr: true,
+		},
+		{
+			name: "Empty env value ignored (fallback to flag)",
+			args: []string{"cmd", "-a", "flags:9090", "-i", "15", "-f", "test_metrics.json", "-r=false"},
+			env: map[string]string{
+				"ADDRESS":           "", // пустая строка — игнорируется
+				"STORE_INTERVAL":    "", // пустая строка — игнорируется
+				"RESTORE":           "", // пустая строка — игнорируется
+				"FILE_STORAGE_PATH": "", // пустая строка — игнорируется
+			},
+			wantErr: false,
+			expected: &Config{
+				RunAddr: "flags:9090",
+				Store: StoreConfig{
+					StoreInterval:   15 * time.Second,
+					FileStoragePath: "test_metrics.json",
+					Restore:         false,
+				},
+			},
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			// Сброс флагов перед каждым тестом
+			originalEnv := make(map[string]*string)
+			for _, key := range []string{"ADDRESS", "STORE_INTERVAL", "FILE_STORAGE_PATH", "RESTORE"} {
+				if val, ok := os.LookupEnv(key); ok {
+					originalEnv[key] = &val
+				} else {
+					originalEnv[key] = nil
+				}
+			}
+
+			defer func() {
+				for key, valPtr := range originalEnv {
+					if valPtr == nil {
+						os.Unsetenv(key)
+					} else {
+						os.Setenv(key, *valPtr)
+					}
+				}
+			}()
+
 			flag.CommandLine = flag.NewFlagSet(os.Args[0], flag.ExitOnError)
 
-			// Установка переменной окружения
-			if tt.envSet {
-				os.Setenv("ADDRESS", tt.envValue)
-			} else {
-				os.Unsetenv("ADDRESS")
+			if tt.env != nil {
+				for k, v := range tt.env {
+					os.Setenv(k, v)
+				}
 			}
 
 			os.Args = tt.args
@@ -189,8 +347,14 @@ func TestParseFlags(t *testing.T) {
 			} else {
 				require.NoError(t, err, "ParseFlags() не должна возвращать ошибку")
 				require.NotNil(t, cfg)
-				assert.Equal(t, tt.expectedAddr, cfg.RunAddr,
+				assert.Equal(t, tt.expected.RunAddr, cfg.RunAddr,
 					"RunAddr должно совпадать с ожидаемым")
+				assert.Equal(t, tt.expected.Store.StoreInterval, cfg.Store.StoreInterval,
+					"Store.StoreInterval должно совпадать с ожидаемым")
+				assert.Equal(t, tt.expected.Store.FileStoragePath, cfg.Store.FileStoragePath,
+					"Store.FileStoragePath должно совпадать с ожидаемым")
+				assert.Equal(t, tt.expected.Store.Restore, cfg.Store.Restore,
+					"Store.Restore должен совпадать с ожидаемым")
 			}
 		})
 	}
