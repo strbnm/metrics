@@ -5,7 +5,6 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"github.com/strbnm/metrics/internal/logger"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zaptest/observer"
@@ -68,12 +67,7 @@ func TestLoggingResponseWriter_Write_AccumulatesSize(t *testing.T) {
 
 func TestWithLogging(t *testing.T) {
 	core, logs := observer.New(zap.InfoLevel)
-	oldLogger := logger.Log
-
-	logger.Log = zap.New(core).Sugar()
-	t.Cleanup(func() {
-		logger.Log = oldLogger
-	})
+	testLogger := zap.New(core).Sugar()
 
 	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusCreated)
@@ -87,7 +81,7 @@ func TestWithLogging(t *testing.T) {
 	)
 	rec := httptest.NewRecorder()
 
-	middleware := WithLogging(logger.Log)(handler)
+	middleware := WithLogging(testLogger)(handler)
 	middleware.ServeHTTP(rec, req)
 
 	require.Equal(t, http.StatusCreated, rec.Code)

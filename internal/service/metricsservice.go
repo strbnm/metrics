@@ -4,12 +4,13 @@ import (
 	"fmt"
 	"strconv"
 
-	"github.com/strbnm/metrics/internal/logger"
 	models "github.com/strbnm/metrics/internal/model"
+	"go.uber.org/zap"
 )
 
 type MetricsService struct {
-	repo Repository
+	repo   Repository
+	logger *zap.SugaredLogger
 }
 
 func (s *MetricsService) UpdateMetric(metricType, metricName, valueStr string) error {
@@ -75,13 +76,13 @@ func (s *MetricsService) UpdateMetricFromModel(m models.Metrics) error {
 	switch m.MType {
 	case models.Counter:
 		if m.Delta == nil {
-			logger.Log.Debugw("nil metric counter value with MType=counter", "metric", m)
+			s.logger.Debugw("nil metric counter value with MType=counter", "metric", m)
 			return ErrEmptyMetricValue
 		}
 		m.Value = nil
 	case models.Gauge:
 		if m.Value == nil {
-			logger.Log.Debugw("nil metric gauge value with MType=gauge", "metric", m)
+			s.logger.Debugw("nil metric gauge value with MType=gauge", "metric", m)
 			return ErrEmptyMetricValue
 		}
 		m.Delta = nil
@@ -107,6 +108,9 @@ func (s *MetricsService) GetMetric(m *models.Metrics) error {
 	return nil
 }
 
-func NewMetricsService(repo Repository) *MetricsService {
-	return &MetricsService{repo: repo}
+func NewMetricsService(repo Repository, logger *zap.SugaredLogger) *MetricsService {
+	return &MetricsService{
+		repo:   repo,
+		logger: logger,
+	}
 }

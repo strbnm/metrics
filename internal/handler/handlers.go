@@ -9,9 +9,9 @@ import (
 	"strings"
 
 	"github.com/go-chi/chi/v5"
-	"github.com/strbnm/metrics/internal/logger"
 	"github.com/strbnm/metrics/internal/model"
 	"github.com/strbnm/metrics/internal/service"
+	"go.uber.org/zap"
 )
 
 type MetricsService interface {
@@ -24,10 +24,15 @@ type MetricsService interface {
 
 type Handler struct {
 	service MetricsService
+	logger  *zap.SugaredLogger
 }
 
-func NewHandler(service MetricsService) *Handler {
-	return &Handler{service: service}
+func NewHandler(service MetricsService, logger *zap.SugaredLogger) *Handler {
+	return &Handler{
+		service: service,
+		logger:  logger,
+	}
+
 }
 
 func (h *Handler) UpdateHandler(w http.ResponseWriter, r *http.Request) {
@@ -134,7 +139,7 @@ func (h *Handler) UpdateJSONHandler(w http.ResponseWriter, r *http.Request) {
 	var metric models.Metrics
 
 	if err := json.NewDecoder(r.Body).Decode(&metric); err != nil {
-		logger.Log.Debugw("Error decoding JSON", "error", err)
+		h.logger.Debugw("Error decoding JSON", "error", err)
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
@@ -160,7 +165,7 @@ func (h *Handler) ValueJSONHandler(w http.ResponseWriter, r *http.Request) {
 	var m models.Metrics
 
 	if err := json.NewDecoder(r.Body).Decode(&m); err != nil {
-		logger.Log.Debugw("Error decoding JSON", "error", err)
+		h.logger.Debugw("Error decoding JSON", "error", err)
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}

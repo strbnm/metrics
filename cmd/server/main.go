@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log"
 	"net/http"
 	"os"
 	"os/signal"
@@ -16,6 +17,7 @@ import (
 	"github.com/strbnm/metrics/internal/middleware"
 	"github.com/strbnm/metrics/internal/repository"
 	"github.com/strbnm/metrics/internal/service"
+	"go.uber.org/zap"
 
 	"github.com/go-chi/chi/v5"
 
@@ -23,24 +25,27 @@ import (
 )
 
 func main() {
-	cleanup := logger.SetupLogger("info")
+	appLogger, cleanup, err := logger.SetupLogger("info")
+	if err != nil {
+		log.Fatalf("logger initialization failed %v", err)
+	}
 	defer cleanup()
 
-	if err := run(); err != nil {
-		logger.Log.Errorf("server error %v", err)
+	if err := run(appLogger); err != nil {
+		appLogger.Errorf("server error %v", err)
 		os.Exit(1)
 	}
 }
 
-func run() error {
+func run(appLogger *zap.SugaredLogger) error {
 	cfg, err := config.ParseFlags()
 	if err != nil {
 		return fmt.Errorf("main: configuration parsing failed %w", err)
 	}
 
 	isSyncFlush := cfg.Store.StoreInterval == 0
-	fileStorage := repository.NewFileStorage(cfg.Store.FileStoragePath, isSyncFlush, cfg.Store.Restore)
-	metricsService := service.NewMetricsService(fileStorage)
+	fileStorage := repository.NewFileStorage(cfg.Store.FileStoragePath, isSyncFlush, cfg.Store.Restore, appLogger)
+	metricsService := service.NewMetricsService(fileStorage, appLogger)
 
 	ctx, stop := signal.NotifyContext(context.Background(),
 		syscall.SIGINT, syscall.SIGTERM)
@@ -48,15 +53,15 @@ func run() error {
 
 	// Запускаем периодическое сохранение в горутине
 	if !isSyncFlush {
-		go runPeriodicSave(ctx, fileStorage, cfg.Store.StoreInterval)
+		go runPeriodicSave(ctx, fileStorage, cfg.Store.StoreInterval, appLogger)
 	}
 
-	h := handler.NewHandler(metricsService)
+	h := handler.NewHandler(metricsService, appLogger)
 
 	r := chi.NewRouter()
 	r.Use(middlewares.StripSlashes)
 	r.Use(middleware.GzipMiddleware)
-	r.Use(middleware.WithLogging(logger.Log))
+	r.Use(middleware.WithLogging(appLogger))
 
 	r.Route("/", func(r chi.Router) {
 		r.Get("/", h.ListAllMetricsHandler)
@@ -71,7 +76,7 @@ func run() error {
 		Handler: r,
 	}
 
-	logger.Log.Infof("Server is starting on %s", cfg.RunAddr)
+	appLogger.Infof("Server is starting on %s", cfg.RunAddr)
 
 	// Запуск сервера в горутине, чтобы main мог ждать сигнал
 	errCh := make(chan error, 1)
@@ -82,7 +87,7 @@ func run() error {
 	// Ждём сигнал остановки или ошибку сервера
 	select {
 	case <-ctx.Done():
-		logger.Log.Info("shutting down gracefully...")
+		appLogger.Info("shutting down gracefully...")
 	case errServer := <-errCh:
 		if errServer != nil && !errors.Is(errServer, http.ErrServerClosed) {
 			return errServer
@@ -93,20 +98,20 @@ func run() error {
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	if err := srv.Shutdown(shutdownCtx); err != nil {
-		logger.Log.Errorf("server shutdown error: %v", err)
+		appLogger.Errorf("server shutdown error: %v", err)
 	}
 
 	// Финальное сохранение метрик
 	if errFlush := fileStorage.Flush(); errFlush != nil {
-		logger.Log.Errorf("final flush failed: %v", errFlush)
+		appLogger.Errorf("final flush failed: %v", errFlush)
 	} else {
-		logger.Log.Info("final flush completed")
+		appLogger.Info("final flush completed")
 	}
 
 	return nil
 }
 
-func runPeriodicSave(ctx context.Context, r *repository.FileStorage, interval time.Duration) {
+func runPeriodicSave(ctx context.Context, r *repository.FileStorage, interval time.Duration, appLogger *zap.SugaredLogger) {
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 
@@ -114,9 +119,9 @@ func runPeriodicSave(ctx context.Context, r *repository.FileStorage, interval ti
 		select {
 		case <-ticker.C:
 			if err := r.Flush(); err != nil {
-				logger.Log.Errorf("periodic save failed: %v", err)
+				appLogger.Errorf("periodic save failed: %v", err)
 			} else {
-				logger.Log.Infow("periodic save completed")
+				appLogger.Infow("periodic save completed")
 			}
 		case <-ctx.Done():
 			return

@@ -1,20 +1,17 @@
 package logger
 
 import (
-	"fmt"
 	"os"
 
 	"go.uber.org/zap"
 )
 
-var Log *zap.SugaredLogger = zap.NewNop().Sugar()
-
-// Initialize инициализирует синглтон логера с необходимым уровнем логирования.
-func Initialize(level string) error {
+// Initialize инициализирует логгер с необходимым уровнем логирования.
+func Initialize(level string) (*zap.SugaredLogger, error) {
 
 	lvl, err := zap.ParseAtomicLevel(level)
 	if err != nil {
-		return err
+		return nil, err
 	}
 
 	var cfg zap.Config
@@ -27,19 +24,22 @@ func Initialize(level string) error {
 	cfg.Level = lvl
 	zl, err := cfg.Build()
 	if err != nil {
-		return err
+		return nil, err
 	}
 
-	Log = zl.Sugar()
-	return nil
+	log := zl.Sugar()
+	return log, nil
 }
 
-func SetupLogger(level string) func() {
-	if err := Initialize(level); err != nil {
-		panic(fmt.Sprintf("Initializing logger failed: %v", err))
+func SetupLogger(level string) (*zap.SugaredLogger, func(), error) {
+	logger, err := Initialize(level)
+	if err != nil {
+		return nil, nil, err
 	}
 
-	return func() {
-		_ = Log.Sync()
+	cleanup := func() {
+		_ = logger.Sync()
 	}
+
+	return logger, cleanup, nil
 }

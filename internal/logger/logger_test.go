@@ -1,48 +1,69 @@
 package logger
 
 import (
+	"os"
 	"testing"
 
 	"github.com/stretchr/testify/require"
-	"go.uber.org/zap"
 )
 
-func TestInitialize(t *testing.T) {
-	t.Cleanup(func() {
-		Log = zap.NewNop().Sugar()
-	})
+func TestInitialize_ValidLevels(t *testing.T) {
+	validLevels := []string{"debug", "info", "warn", "error", "dpanic", "panic", "fatal"}
 
-	err := Initialize("info")
-
-	require.NoError(t, err)
-	require.NotNil(t, Log)
+	for _, lvl := range validLevels {
+		t.Run(lvl, func(t *testing.T) {
+			logger, err := Initialize(lvl)
+			require.NoError(t, err)
+			require.NotNil(t, logger)
+		})
+	}
 }
 
 func TestInitialize_InvalidLevel(t *testing.T) {
-	t.Cleanup(func() {
-		Log = zap.NewNop().Sugar()
-	})
-
-	err := Initialize("invalid-level")
-
+	testLogger, err := Initialize("invalid-level")
 	require.Error(t, err)
+	require.Nil(t, testLogger)
+
+	// Проверяем, что ошибка понятная (содержит имя уровня)
+	require.Contains(t, err.Error(), "invalid-level")
 }
 
-func TestSetupLogger(t *testing.T) {
-	t.Cleanup(func() {
-		Log = zap.NewNop().Sugar()
-	})
+// Тест для ветки Development (APP_ENV=development)
+func TestInitialize_DevelopmentMode(t *testing.T) {
+	originalEnv := os.Getenv("APP_ENV")
+	defer os.Setenv("APP_ENV", originalEnv)
+	os.Setenv("APP_ENV", "development")
 
-	cleanup := SetupLogger("info")
+	logger, err := Initialize("info")
+	require.NoError(t, err)
+	require.NotNil(t, logger)
+}
 
+// Тест для ветки Production (APP_ENV != development)
+func TestInitialize_ProductionMode(t *testing.T) {
+	originalEnv := os.Getenv("APP_ENV")
+	defer os.Setenv("APP_ENV", originalEnv)
+	os.Setenv("APP_ENV", "production")
+
+	logger, err := Initialize("info")
+	require.NoError(t, err)
+	require.NotNil(t, logger)
+}
+
+func TestSetupLogger_Success(t *testing.T) {
+	logger, cleanup, err := SetupLogger("info")
+
+	require.NoError(t, err)
+	require.NotNil(t, logger)
 	require.NotNil(t, cleanup)
-	require.NotNil(t, Log)
 
 	cleanup()
 }
 
-func TestSetupLogger_InvalidLevel(t *testing.T) {
-	require.Panics(t, func() {
-		SetupLogger("invalid-level")
-	})
+func TestSetupLogger_ErrorPropagation(t *testing.T) {
+	// Эмулируем ошибку из Initialize, передав неверный уровень
+	_, cleanup, err := SetupLogger("not-a-real-level")
+
+	require.Error(t, err)
+	require.Nil(t, cleanup) // При ошибке cleanup не должен создаваться
 }

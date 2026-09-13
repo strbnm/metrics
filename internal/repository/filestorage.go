@@ -8,28 +8,30 @@ import (
 	"os"
 	"sort"
 
-	"github.com/strbnm/metrics/internal/logger"
 	models "github.com/strbnm/metrics/internal/model"
+	"go.uber.org/zap"
 )
 
 type FileStorage struct {
 	*MemStorage
 	fileName    string
 	isSyncFlush bool
+	logger      *zap.SugaredLogger
 }
 
-func NewFileStorage(fileName string, isSyncFlush, restore bool) *FileStorage {
+func NewFileStorage(fileName string, isSyncFlush, restore bool, logger *zap.SugaredLogger) *FileStorage {
 	fileStorage := &FileStorage{
 		MemStorage:  NewMemStorage(),
 		fileName:    fileName,
 		isSyncFlush: isSyncFlush,
+		logger:      logger,
 	}
 	// Загрузка из файла если restore == true
 	if restore {
 		if err := fileStorage.Load(); err != nil {
-			logger.Log.Errorf("failed to load metrics: %v", err)
+			logger.Errorf("failed to load metrics: %v", err)
 		} else {
-			logger.Log.Infow("metrics restored from file", "filename", fileName)
+			logger.Infow("metrics restored from file", "filename", fileName)
 		}
 	}
 	return fileStorage
@@ -77,7 +79,7 @@ func (r *FileStorage) Load() error {
 		metrics[key] = metric
 	}
 	r.MemStorage.metrics = metrics
-	logger.Log.Debugf("loaded %d metrics", len(loaded))
+	r.logger.Debugf("loaded %d metrics", len(loaded))
 	return nil
 }
 
