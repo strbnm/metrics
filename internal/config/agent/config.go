@@ -3,6 +3,9 @@ package agent
 import (
 	"flag"
 	"fmt"
+	"os"
+	"strconv"
+	"strings"
 	"time"
 )
 
@@ -52,6 +55,28 @@ func ParseFlags() (*Config, error) {
 		"time interval between reports in seconds")
 
 	flag.Parse()
+
+	if envAddr, ok := os.LookupEnv("ADDRESS"); ok && envAddr != "" {
+		cfg.ServerConfig.ServerAddr = strings.TrimSpace(envAddr)
+	}
+
+	if envPollInterval, ok := os.LookupEnv("POLL_INTERVAL"); ok && envPollInterval != "" {
+		value, err := strconv.ParseInt(envPollInterval, 10, 64)
+		if err != nil {
+			fmt.Printf("invalid value for system environment POLL_INTERVAL: %s. Will use default value or value of cmd argument -p if present.\n", envPollInterval)
+		} else {
+			pollInterval = &value
+		}
+	}
+
+	if envReportInterval, ok := os.LookupEnv("REPORT_INTERVAL"); ok && envReportInterval != "" {
+		value, err := strconv.ParseInt(envReportInterval, 10, 64)
+		if err != nil {
+			fmt.Printf("invalid value for system environment REPORT_INTERVAL: %s. Will use default value or value of cmd argument -r if present.\n", envReportInterval)
+		} else {
+			reportInterval = &value
+		}
+	}
 
 	// Применяем и валидируем значения
 	if err := applyAndValidateIntervals(cfg, *pollInterval, *reportInterval); err != nil {

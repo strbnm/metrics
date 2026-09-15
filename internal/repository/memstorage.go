@@ -2,12 +2,14 @@ package repository
 
 import (
 	"errors"
+	"sync"
 
 	models "github.com/strbnm/metrics/internal/model"
 )
 
 type MemStorage struct {
 	metrics map[string]models.Metrics
+	mu      sync.RWMutex
 }
 
 func NewMemStorage() *MemStorage {
@@ -17,6 +19,9 @@ func NewMemStorage() *MemStorage {
 }
 
 func (r *MemStorage) Save(metric models.Metrics) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
 	key := buildKey(metric.ID, metric.MType)
 	switch metric.MType {
 	case models.Gauge:
@@ -47,6 +52,9 @@ func (r *MemStorage) Save(metric models.Metrics) error {
 }
 
 func (r *MemStorage) Get(id string, mType string) (models.Metrics, error) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+
 	key := buildKey(id, mType)
 	metric, ok := r.metrics[key]
 	if !ok {
@@ -56,6 +64,9 @@ func (r *MemStorage) Get(id string, mType string) (models.Metrics, error) {
 }
 
 func (r *MemStorage) List() ([]models.Metrics, error) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+
 	metrics := make([]models.Metrics, 0, len(r.metrics))
 	for _, metric := range r.metrics {
 		metrics = append(metrics, metric)

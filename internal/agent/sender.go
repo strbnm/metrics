@@ -1,10 +1,11 @@
 package agent
 
 import (
+	"encoding/json"
 	"fmt"
 	"net/http"
-	"strconv"
 
+	"github.com/strbnm/metrics/internal/compress"
 	models "github.com/strbnm/metrics/internal/model"
 
 	"github.com/go-resty/resty/v2"
@@ -26,7 +27,7 @@ func NewSender(serverURL string) (*Sender, error) {
 
 func (s *Sender) Send(metrics []models.Metrics) error {
 	for _, metric := range metrics {
-		err := s.sendMetric(metric)
+		err := s.sendMetric(&metric)
 		if err != nil {
 			return fmt.Errorf("failed to send metric %s: %w", metric.ID, err)
 		}
@@ -34,26 +35,24 @@ func (s *Sender) Send(metrics []models.Metrics) error {
 	return nil
 }
 
-func (s *Sender) sendMetric(metric models.Metrics) error {
-	var valueStr string
+func (s *Sender) sendMetric(metric *models.Metrics) error {
+	// 1. Маршалинг структуры в JSON байты
+	data, err := json.Marshal(metric)
+	if err != nil {
+		return fmt.Errorf("failed to marshal metric: %w", err)
+	}
 
-	switch metric.MType {
-	case models.Gauge:
-		valueStr = strconv.FormatFloat(*metric.Value, 'f', -1, 64)
-	case models.Counter:
-		valueStr = strconv.FormatInt(*metric.Delta, 10)
-	default:
-		return fmt.Errorf("unknown metric type: %s", metric.MType)
+	compressed, err := compress.Compress(data)
+	if err != nil {
+		return fmt.Errorf("failed to compress metric: %w", err)
 	}
 
 	resp, err := s.client.R().
-		SetPathParams(map[string]string{
-			"metricType":  metric.MType,
-			"metricName":  metric.ID,
-			"metricValue": valueStr,
-		}).
-		SetHeader("Content-Type", "text/plain; charset=utf-8").
-		Post("/update/{metricType}/{metricName}/{metricValue}")
+		SetBody(compressed).
+		SetHeader("Content-Type", "application/json; charset=utf-8").
+		SetHeader("Accept-Encoding", "gzip").
+		SetHeader("Content-Encoding", "gzip").
+		Post("/update")
 	if err != nil {
 		return err
 	}

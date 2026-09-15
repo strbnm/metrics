@@ -5,10 +5,12 @@ import (
 	"strconv"
 
 	models "github.com/strbnm/metrics/internal/model"
+	"go.uber.org/zap"
 )
 
 type MetricsService struct {
-	repo Repository
+	repo   Repository
+	logger *zap.SugaredLogger
 }
 
 func (s *MetricsService) UpdateMetric(metricType, metricName, valueStr string) error {
@@ -70,6 +72,45 @@ func (s *MetricsService) GetMetricValue(metricName, metricType string) (string, 
 	}
 }
 
-func NewMetricsService(repo Repository) *MetricsService {
-	return &MetricsService{repo: repo}
+func (s *MetricsService) UpdateMetricFromModel(m models.Metrics) error {
+	switch m.MType {
+	case models.Counter:
+		if m.Delta == nil {
+			s.logger.Debugw("nil metric counter value with MType=counter", "metric", m)
+			return ErrEmptyMetricValue
+		}
+		m.Value = nil
+	case models.Gauge:
+		if m.Value == nil {
+			s.logger.Debugw("nil metric gauge value with MType=gauge", "metric", m)
+			return ErrEmptyMetricValue
+		}
+		m.Delta = nil
+	}
+	return s.repo.Save(m)
+}
+
+func (s *MetricsService) GetMetric(m *models.Metrics) error {
+	metric, err := s.repo.Get(m.ID, m.MType)
+	if err != nil {
+		return err
+	}
+	switch metric.MType {
+	case models.Gauge:
+		if metric.Value != nil {
+			m.Value = metric.Value
+		}
+	case models.Counter:
+		if metric.Delta != nil {
+			m.Delta = metric.Delta
+		}
+	}
+	return nil
+}
+
+func NewMetricsService(repo Repository, logger *zap.SugaredLogger) *MetricsService {
+	return &MetricsService{
+		repo:   repo,
+		logger: logger,
+	}
 }

@@ -126,17 +126,19 @@ func TestApplyAndValidateIntervals(t *testing.T) {
 
 func TestParseFlags(t *testing.T) {
 	originalArgs := os.Args
-	defer func() { os.Args = originalArgs }() // Восстанавливаем аргументы после теста
+	defer func() { os.Args = originalArgs }()
 
 	tests := []struct {
 		name     string
 		args     []string
+		env      map[string]string
 		wantErr  bool
 		expected *Config
 	}{
 		{
-			name:    "Default values",
+			name:    "Default values (no args, no env)",
 			args:    []string{"cmd"},
+			env:     nil,
 			wantErr: false,
 			expected: &Config{
 				ServerConfig: ServerConfig{
@@ -150,8 +152,9 @@ func TestParseFlags(t *testing.T) {
 			},
 		},
 		{
-			name:    "Custom server address",
+			name:    "Custom server address via flag (env not set)",
 			args:    []string{"cmd", "-a", "test:9090"},
+			env:     nil,
 			wantErr: false,
 			expected: &Config{
 				ServerConfig: ServerConfig{
@@ -165,8 +168,9 @@ func TestParseFlags(t *testing.T) {
 			},
 		},
 		{
-			name:    "Custom intervals",
+			name:    "Custom intervals via flags (env not set)",
 			args:    []string{"cmd", "-p", "5", "-r", "20"},
+			env:     nil,
 			wantErr: false,
 			expected: &Config{
 				ServerConfig: ServerConfig{
@@ -180,36 +184,147 @@ func TestParseFlags(t *testing.T) {
 			},
 		},
 		{
-			name:    "Negative interval",
+			name: "Env overrides flag for server address",
+			args: []string{"cmd", "-a", "flag-addr:8000"},
+			env: map[string]string{
+				"ADDRESS": "env-addr:9000",
+			},
+			wantErr: false,
+			expected: &Config{
+				ServerConfig: ServerConfig{
+					Schema:     "http",
+					ServerAddr: "env-addr:9000", // берётся из env
+				},
+				CollectorConfig: CollectorConfig{
+					PollInterval:   2 * time.Second,
+					ReportInterval: 10 * time.Second,
+				},
+			},
+		},
+		{
+			name: "Env overrides flags for intervals",
+			args: []string{"cmd", "-p", "1", "-r", "2"},
+			env: map[string]string{
+				"POLL_INTERVAL":   "30",
+				"REPORT_INTERVAL": "60",
+			},
+			wantErr: false,
+			expected: &Config{
+				ServerConfig: ServerConfig{
+					Schema:     "http",
+					ServerAddr: "localhost:8080",
+				},
+				CollectorConfig: CollectorConfig{
+					PollInterval:   30 * time.Second, // из env
+					ReportInterval: 60 * time.Second, // из env
+				},
+			},
+		},
+		{
+			name: "Invalid env value for POLL_INTERVAL and REPORT_INTERVAL (fallback to flag)",
+			args: []string{"cmd", "-p", "10", "-r", "30"},
+			env: map[string]string{
+				"POLL_INTERVAL":   "not-a-number",
+				"REPORT_INTERVAL": "not-a-number too",
+			},
+			wantErr: false, // ошибка в env не должна ломать парсинг — используется флаг
+			expected: &Config{
+				ServerConfig: ServerConfig{
+					Schema:     "http",
+					ServerAddr: "localhost:8080",
+				},
+				CollectorConfig: CollectorConfig{
+					PollInterval:   10 * time.Second, // из флага
+					ReportInterval: 30 * time.Second, // из флага
+				},
+			},
+		},
+		{
+			name: "Invalid env value for REPORT_INTERVAL (fallback to default)",
+			args: []string{"cmd"}, // нет флага -r
+			env: map[string]string{
+				"REPORT_INTERVAL": "-5", // отрицательное значение, но сначала проверим парсинг
+			},
+			wantErr: true, // applyAndValidateIntervals должен вернуть ошибку из-за отрицательного значения
+		},
+		{
+			name:    "Negative interval via flag (validation fails)",
 			args:    []string{"cmd", "-p", "-1"},
+			env:     nil,
 			wantErr: true,
+		},
+		{
+			name: "Empty env value ignored (fallback to flag)",
+			args: []string{"cmd", "-p", "15"},
+			env: map[string]string{
+				"POLL_INTERVAL": "", // пустая строка — игнорируется
+			},
+			wantErr: false,
+			expected: &Config{
+				ServerConfig: ServerConfig{
+					Schema:     "http",
+					ServerAddr: "localhost:8080",
+				},
+				CollectorConfig: CollectorConfig{
+					PollInterval:   15 * time.Second, // из флага
+					ReportInterval: 10 * time.Second,
+				},
+			},
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			// ОЧИЩАЕМ ФЛАГИ ПЕРЕД КАЖДЫМ ТЕСТОМ
+
+			originalEnv := make(map[string]*string)
+			for _, key := range []string{"ADDRESS", "POLL_INTERVAL", "REPORT_INTERVAL"} {
+				if val, ok := os.LookupEnv(key); ok {
+					originalEnv[key] = &val
+				} else {
+					originalEnv[key] = nil
+				}
+			}
+
+			defer func() {
+				for key, valPtr := range originalEnv {
+					if valPtr == nil {
+						os.Unsetenv(key)
+					} else {
+						os.Setenv(key, *valPtr)
+					}
+				}
+			}()
+
 			flag.CommandLine = flag.NewFlagSet(os.Args[0], flag.ExitOnError)
+
+			if tt.env != nil {
+				for k, v := range tt.env {
+					os.Setenv(k, v)
+				}
+			}
+
 			os.Args = tt.args
+
 			cfg, err := ParseFlags()
 
 			if tt.wantErr {
 				require.Error(t, err, "ParseFlags() должна возвращать ошибку")
-			} else {
-				require.NoError(t, err, "ParseFlags() не должна возвращать ошибку")
-
-				// Проверяем ServerConfig
-				assert.Equal(t, tt.expected.ServerConfig.Schema, cfg.ServerConfig.Schema,
-					"ServerConfig.Schema должно совпадать с ожидаемым")
-				assert.Equal(t, tt.expected.ServerConfig.ServerAddr, cfg.ServerConfig.ServerAddr,
-					"ServerConfig.ServerAddr должно совпадать с ожидаемым")
-
-				// Проверяем CollectorConfig
-				assert.Equal(t, tt.expected.CollectorConfig.PollInterval, cfg.CollectorConfig.PollInterval,
-					"CollectorConfig.PollInterval должно совпадать с ожидаемым")
-				assert.Equal(t, tt.expected.CollectorConfig.ReportInterval, cfg.CollectorConfig.ReportInterval,
-					"CollectorConfig.ReportInterval должно совпадать с ожидаемым")
+				return
 			}
+
+			require.NoError(t, err, "ParseFlags() не должна возвращать ошибку")
+
+			// Проверяем ServerConfig
+			assert.Equal(t, tt.expected.ServerConfig.Schema, cfg.ServerConfig.Schema,
+				"ServerConfig.Schema должно совпадать с ожидаемым")
+			assert.Equal(t, tt.expected.ServerConfig.ServerAddr, cfg.ServerConfig.ServerAddr,
+				"ServerConfig.ServerAddr должно совпадать с ожидаемым")
+
+			// Проверяем CollectorConfig
+			assert.Equal(t, tt.expected.CollectorConfig.PollInterval, cfg.CollectorConfig.PollInterval,
+				"CollectorConfig.PollInterval должно совпадать с ожидаемым")
+			assert.Equal(t, tt.expected.CollectorConfig.ReportInterval, cfg.CollectorConfig.ReportInterval,
+				"CollectorConfig.ReportInterval должно совпадать с ожидаемым")
 		})
 	}
 }
