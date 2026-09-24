@@ -1,6 +1,7 @@
 package repository
 
 import (
+	"context"
 	"errors"
 	"sync"
 
@@ -18,7 +19,11 @@ func NewMemStorage() *MemStorage {
 	}
 }
 
-func (r *MemStorage) Save(metric models.Metrics) error {
+func (r *MemStorage) Save(ctx context.Context, metric models.Metrics) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
@@ -51,7 +56,11 @@ func (r *MemStorage) Save(metric models.Metrics) error {
 	return nil
 }
 
-func (r *MemStorage) Get(id string, mType string) (models.Metrics, error) {
+func (r *MemStorage) Get(ctx context.Context, id string, mType string) (models.Metrics, error) {
+	if err := ctx.Err(); err != nil {
+		return models.Metrics{}, err
+	}
+
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 
@@ -63,7 +72,11 @@ func (r *MemStorage) Get(id string, mType string) (models.Metrics, error) {
 	return metric, nil
 }
 
-func (r *MemStorage) List() ([]models.Metrics, error) {
+func (r *MemStorage) List(ctx context.Context) ([]models.Metrics, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 

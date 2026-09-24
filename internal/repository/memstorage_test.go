@@ -1,6 +1,7 @@
 package repository
 
 import (
+	"context"
 	"testing"
 
 	"github.com/strbnm/metrics/internal/service"
@@ -20,7 +21,10 @@ func TestNewMemStorage(t *testing.T) {
 
 // TestMemStorage_Contract — запускаем тесты контракта Repository для MemStorage
 func TestMemStorage_Contract(t *testing.T) {
-	testRepositoryContract(t, func() service.Repository {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	testRepositoryContract(ctx, t, func() service.Repository {
 		return NewMemStorage()
 	})
 }
