@@ -1,12 +1,14 @@
 package repository
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"os"
 	"sort"
+	"time"
 
 	models "github.com/strbnm/metrics/internal/model"
 	"go.uber.org/zap"
@@ -28,22 +30,49 @@ func NewFileStorage(fileName string, isSyncFlush, restore bool, logger *zap.Suga
 	}
 	// Загрузка из файла если restore == true
 	if restore {
-		if err := fileStorage.Load(); err != nil {
-			logger.Errorf("failed to load metrics: %v", err)
-		} else {
-			logger.Infow("metrics restored from file", "filename", fileName)
+		initCtx, initCancel := context.WithTimeout(context.Background(), 5*time.Second)
+
+		// Читаем файл в горутине, записываем результат только при успехе
+		done := make(chan struct {
+			metrics map[string]models.Metrics
+			err     error
+		}, 1)
+
+		go func() {
+			loaded, err := readMetricsFromFile(fileName)
+			done <- struct {
+				metrics map[string]models.Metrics
+				err     error
+			}{loaded, err}
+		}()
+
+		select {
+		case res := <-done:
+			if res.err != nil {
+				logger.Errorf("failed to load metrics: %v", res.err)
+			} else {
+				fileStorage.mu.Lock()
+				fileStorage.MemStorage.metrics = res.metrics
+				fileStorage.mu.Unlock()
+				logger.Infow("metrics restored from file", "filename", fileName)
+			}
+		case <-initCtx.Done():
+			logger.Warnf("metrics load timed out, starting with empty storage")
 		}
+
+		initCancel()
 	}
+
 	return fileStorage
 }
 
-func (r *FileStorage) Save(metric models.Metrics) error {
-	err := r.MemStorage.Save(metric)
+func (r *FileStorage) Save(ctx context.Context, metric models.Metrics) error {
+	err := r.MemStorage.Save(ctx, metric)
 	if err != nil {
 		return err
 	}
 	if r.isSyncFlush {
-		err = r.Flush()
+		err = r.Flush(ctx)
 		if err != nil {
 			return err
 		}
@@ -51,16 +80,13 @@ func (r *FileStorage) Save(metric models.Metrics) error {
 	return nil
 }
 
-func (r *FileStorage) Load() error {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-
-	file, err := os.Open(r.fileName)
+func readMetricsFromFile(fileName string) (map[string]models.Metrics, error) {
+	file, err := os.Open(fileName)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
-			return nil // файла нет — это нормально при первом запуске
+			return nil, nil
 		}
-		return fmt.Errorf("repository: open file: %w", err)
+		return nil, fmt.Errorf("repository: open file: %w", err)
 	}
 	defer file.Close()
 
@@ -68,9 +94,9 @@ func (r *FileStorage) Load() error {
 	decoder := json.NewDecoder(file)
 	if errDecode := decoder.Decode(&loaded); errDecode != nil {
 		if errors.Is(errDecode, io.EOF) {
-			return nil // пустой файл — ничего не загружаем
+			return nil, nil
 		}
-		return fmt.Errorf("repository: decode metrics: %w", errDecode)
+		return nil, fmt.Errorf("repository: decode metrics: %w", errDecode)
 	}
 
 	metrics := make(map[string]models.Metrics, len(loaded))
@@ -78,13 +104,11 @@ func (r *FileStorage) Load() error {
 		key := buildKey(metric.ID, metric.MType)
 		metrics[key] = metric
 	}
-	r.MemStorage.metrics = metrics
-	r.logger.Debugf("loaded %d metrics", len(loaded))
-	return nil
+	return metrics, nil
 }
 
-func (r *FileStorage) Flush() error {
-	listMetrics, err := r.MemStorage.List()
+func (r *FileStorage) Flush(ctx context.Context) error {
+	listMetrics, err := r.MemStorage.List(ctx)
 	if err != nil {
 		return err
 	}
