@@ -1,6 +1,7 @@
 package service
 
 import (
+	"context"
 	"fmt"
 	"strconv"
 
@@ -13,7 +14,7 @@ type MetricsService struct {
 	logger *zap.SugaredLogger
 }
 
-func (s *MetricsService) UpdateMetric(metricType, metricName, valueStr string) error {
+func (s *MetricsService) UpdateMetric(ctx context.Context, metricType, metricName, valueStr string) error {
 	if metricType != models.Gauge && metricType != models.Counter {
 		return ErrInvalidMetricType
 	}
@@ -50,15 +51,15 @@ func (s *MetricsService) UpdateMetric(metricType, metricName, valueStr string) e
 		}
 	}
 
-	return s.repo.Save(metric)
+	return s.repo.Save(ctx, metric)
 }
 
-func (s *MetricsService) ListAllMetrics() ([]models.Metrics, error) {
-	return s.repo.List()
+func (s *MetricsService) ListAllMetrics(ctx context.Context) ([]models.Metrics, error) {
+	return s.repo.List(ctx)
 }
 
-func (s *MetricsService) GetMetricValue(metricName, metricType string) (string, error) {
-	metric, err := s.repo.Get(metricName, metricType)
+func (s *MetricsService) GetMetricValue(ctx context.Context, metricName, metricType string) (string, error) {
+	metric, err := s.repo.Get(ctx, metricName, metricType)
 	if err != nil {
 		return "", err
 	}
@@ -72,7 +73,7 @@ func (s *MetricsService) GetMetricValue(metricName, metricType string) (string, 
 	}
 }
 
-func (s *MetricsService) UpdateMetricFromModel(m models.Metrics) error {
+func (s *MetricsService) UpdateMetricFromModel(ctx context.Context, m models.Metrics) error {
 	switch m.MType {
 	case models.Counter:
 		if m.Delta == nil {
@@ -87,11 +88,11 @@ func (s *MetricsService) UpdateMetricFromModel(m models.Metrics) error {
 		}
 		m.Delta = nil
 	}
-	return s.repo.Save(m)
+	return s.repo.Save(ctx, m)
 }
 
-func (s *MetricsService) GetMetric(m *models.Metrics) error {
-	metric, err := s.repo.Get(m.ID, m.MType)
+func (s *MetricsService) GetMetric(ctx context.Context, m *models.Metrics) error {
+	metric, err := s.repo.Get(ctx, m.ID, m.MType)
 	if err != nil {
 		return err
 	}

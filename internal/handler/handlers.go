@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -9,17 +10,17 @@ import (
 	"strings"
 
 	"github.com/go-chi/chi/v5"
-	"github.com/strbnm/metrics/internal/model"
+	models "github.com/strbnm/metrics/internal/model"
 	"github.com/strbnm/metrics/internal/service"
 	"go.uber.org/zap"
 )
 
 type MetricsService interface {
-	UpdateMetric(metricType, metricName, valueStr string) error
-	ListAllMetrics() ([]models.Metrics, error)
-	GetMetricValue(metricName, metricType string) (string, error)
-	UpdateMetricFromModel(m models.Metrics) error
-	GetMetric(m *models.Metrics) error
+	UpdateMetric(ctx context.Context, metricType, metricName, valueStr string) error
+	ListAllMetrics(ctx context.Context) ([]models.Metrics, error)
+	GetMetricValue(ctx context.Context, metricName, metricType string) (string, error)
+	UpdateMetricFromModel(ctx context.Context, m models.Metrics) error
+	GetMetric(ctx context.Context, m *models.Metrics) error
 }
 
 type Handler struct {
@@ -40,7 +41,7 @@ func (h *Handler) UpdateHandler(w http.ResponseWriter, r *http.Request) {
 	metricName := chi.URLParam(r, "metricName")
 	valueStr := chi.URLParam(r, "metricValue")
 
-	err := h.service.UpdateMetric(metricType, metricName, valueStr)
+	err := h.service.UpdateMetric(r.Context(), metricType, metricName, valueStr)
 	if err != nil {
 		switch {
 		case errors.Is(err, service.ErrInvalidMetricValue):
@@ -64,7 +65,7 @@ func (h *Handler) UpdateHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) ListAllMetricsHandler(w http.ResponseWriter, r *http.Request) {
-	metrics, err := h.service.ListAllMetrics()
+	metrics, err := h.service.ListAllMetrics(r.Context())
 	if err != nil {
 		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
 		return
@@ -93,7 +94,7 @@ func (h *Handler) ValueHandler(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Metric name is required", http.StatusNotFound)
 	}
 
-	metricValue, err := h.service.GetMetricValue(metricName, metricType)
+	metricValue, err := h.service.GetMetricValue(r.Context(), metricName, metricType)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusNotFound)
 		return
@@ -144,7 +145,7 @@ func (h *Handler) UpdateJSONHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	err := h.service.UpdateMetricFromModel(metric)
+	err := h.service.UpdateMetricFromModel(r.Context(), metric)
 	if err != nil {
 		switch {
 		case errors.Is(err, service.ErrEmptyMetricValue):
@@ -170,7 +171,7 @@ func (h *Handler) ValueJSONHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	err := h.service.GetMetric(&m)
+	err := h.service.GetMetric(r.Context(), &m)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusNotFound)
 		return

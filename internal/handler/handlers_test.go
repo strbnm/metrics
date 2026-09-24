@@ -2,6 +2,7 @@ package handler
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -9,6 +10,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 	models "github.com/strbnm/metrics/internal/model"
@@ -229,12 +231,15 @@ func TestHandler_ValueHandler(t *testing.T) {
 			},
 		},
 	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
 	repo := repository.NewMemStorage()
 	testLogger := zap.NewNop().Sugar()
 	srv := service.NewMetricsService(repo, testLogger)
-	err := srv.UpdateMetric(models.Gauge, "Alloc", "1.000001")
+	err := srv.UpdateMetric(ctx, models.Gauge, "Alloc", "1.000001")
 	require.NoError(t, err)
-	err = srv.UpdateMetric(models.Counter, "PollCount", "100")
+	err = srv.UpdateMetric(ctx, models.Counter, "PollCount", "100")
 	require.NoError(t, err)
 
 	for _, test := range tests {
@@ -320,6 +325,9 @@ func Test_generateMetricsText(t *testing.T) {
 }
 
 func TestHandler_ListAllMetricsHandler(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
 	var err error
 	repo := repository.NewMemStorage()
 	for _, metric := range []models.Metrics{
@@ -339,7 +347,7 @@ func TestHandler_ListAllMetricsHandler(t *testing.T) {
 			Value: func(v float64) *float64 { return &v }(10.1000015),
 		},
 	} {
-		err = repo.Save(metric)
+		err = repo.Save(ctx, metric)
 		require.NoError(t, err)
 	}
 	testLogger := zap.NewNop().Sugar()
@@ -629,12 +637,15 @@ func TestHandler_ValueJSONHandler(t *testing.T) {
 			},
 		},
 	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
 	repo := repository.NewMemStorage()
 	testLogger := zap.NewNop().Sugar()
 	srv := service.NewMetricsService(repo, testLogger)
-	err := srv.UpdateMetric(testGaugeMetric.MType, testGaugeMetric.ID, fmt.Sprint(*testGaugeMetric.Value))
+	err := srv.UpdateMetric(ctx, testGaugeMetric.MType, testGaugeMetric.ID, fmt.Sprint(*testGaugeMetric.Value))
 	require.NoError(t, err)
-	err = srv.UpdateMetric(testCounterMetric.MType, testCounterMetric.ID, fmt.Sprint(*testCounterMetric.Delta))
+	err = srv.UpdateMetric(ctx, testCounterMetric.MType, testCounterMetric.ID, fmt.Sprint(*testCounterMetric.Delta))
 	require.NoError(t, err)
 
 	for _, test := range tests {
