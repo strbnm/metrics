@@ -1,6 +1,7 @@
 package repository
 
 import (
+	"context"
 	"testing"
 
 	models "github.com/strbnm/metrics/internal/model"
@@ -10,7 +11,7 @@ import (
 )
 
 // Базовый набор тест-кейсов для интерфейса Repository
-func testRepositoryContract(t *testing.T, newRepo func() service.Repository) {
+func testRepositoryContract(ctx context.Context, t *testing.T, newRepo func() service.Repository) {
 	t.Run("save and get gauge metric", func(t *testing.T) {
 		repo := newRepo()
 
@@ -20,9 +21,9 @@ func testRepositoryContract(t *testing.T, newRepo func() service.Repository) {
 			Value: func(v float64) *float64 { return &v }(1.0),
 		}
 
-		require.NoError(t, repo.Save(metric))
+		require.NoError(t, repo.Save(ctx, metric))
 
-		got, err := repo.Get(metric.ID, metric.MType)
+		got, err := repo.Get(ctx, metric.ID, metric.MType)
 		require.NoError(t, err)
 		assert.Equal(t, metric, got)
 	})
@@ -36,9 +37,9 @@ func testRepositoryContract(t *testing.T, newRepo func() service.Repository) {
 			Delta: func(v int64) *int64 { return &v }(100),
 		}
 
-		require.NoError(t, repo.Save(metric))
+		require.NoError(t, repo.Save(ctx, metric))
 
-		got, err := repo.Get(metric.ID, metric.MType)
+		got, err := repo.Get(ctx, metric.ID, metric.MType)
 		require.NoError(t, err)
 		assert.Equal(t, metric, got)
 	})
@@ -46,7 +47,7 @@ func testRepositoryContract(t *testing.T, newRepo func() service.Repository) {
 	t.Run("get non-existent metric returns error", func(t *testing.T) {
 		repo := newRepo()
 
-		_, err := repo.Get("NonExistent", models.Gauge)
+		_, err := repo.Get(ctx, "NonExistent", models.Gauge)
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "metric not found")
 	})
@@ -54,7 +55,7 @@ func testRepositoryContract(t *testing.T, newRepo func() service.Repository) {
 	t.Run("list empty storage", func(t *testing.T) {
 		repo := newRepo()
 
-		metrics, err := repo.List()
+		metrics, err := repo.List(ctx)
 		require.NoError(t, err)
 		assert.Empty(t, metrics)
 	})
@@ -73,10 +74,10 @@ func testRepositoryContract(t *testing.T, newRepo func() service.Repository) {
 			Delta: func(v int64) *int64 { return &v }(42),
 		}
 
-		require.NoError(t, repo.Save(gaugeMetric))
-		require.NoError(t, repo.Save(counterMetric))
+		require.NoError(t, repo.Save(ctx, gaugeMetric))
+		require.NoError(t, repo.Save(ctx, counterMetric))
 
-		metrics, err := repo.List()
+		metrics, err := repo.List(ctx)
 		require.NoError(t, err)
 		assert.Len(t, metrics, 2)
 
@@ -103,7 +104,7 @@ func testRepositoryContract(t *testing.T, newRepo func() service.Repository) {
 			Value: nil,
 		}
 
-		err := repo.Save(metric)
+		err := repo.Save(ctx, metric)
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "gauge metric must have a value")
 	})
@@ -117,7 +118,7 @@ func testRepositoryContract(t *testing.T, newRepo func() service.Repository) {
 			Delta: nil,
 		}
 
-		err := repo.Save(metric)
+		err := repo.Save(ctx, metric)
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "counter metric must have a delta")
 	})
@@ -137,13 +138,13 @@ func testRepositoryContract(t *testing.T, newRepo func() service.Repository) {
 			Value: func(v float64) *float64 { return &v }(25.0),
 		}
 
-		err := repo.Save(oldMetric)
+		err := repo.Save(ctx, oldMetric)
 		require.NoError(t, err)
 
-		err = repo.Save(newMetric)
+		err = repo.Save(ctx, newMetric)
 		require.NoError(t, err)
 
-		got, err := repo.Get(newMetric.ID, models.Gauge)
+		got, err := repo.Get(ctx, newMetric.ID, models.Gauge)
 		require.NoError(t, err)
 		assert.Equal(t, 25.0, *got.Value)
 	})
@@ -163,13 +164,13 @@ func testRepositoryContract(t *testing.T, newRepo func() service.Repository) {
 			Delta: func(v int64) *int64 { return &v }(100),
 		}
 
-		err := repo.Save(oldMetric)
+		err := repo.Save(ctx, oldMetric)
 		require.NoError(t, err)
 
-		err = repo.Save(newMetric)
+		err = repo.Save(ctx, newMetric)
 		require.NoError(t, err)
 
-		got, err := repo.Get(newMetric.ID, models.Counter)
+		got, err := repo.Get(ctx, newMetric.ID, models.Counter)
 		require.NoError(t, err)
 		assert.Equal(t, int64(150), *got.Delta)
 	})
@@ -182,8 +183,25 @@ func testRepositoryContract(t *testing.T, newRepo func() service.Repository) {
 			MType: "unknown_type",
 		}
 
-		err := repo.Save(metric)
+		err := repo.Save(ctx, metric)
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "unknown metric type")
+	})
+
+	t.Run("save with canceled context returns error", func(t *testing.T) {
+		repo := newRepo()
+
+		childCtx, cancel := context.WithCancel(ctx)
+		cancel()
+
+		metric := models.Metrics{
+			ID:    "Alloc",
+			MType: models.Gauge,
+			Value: func(v float64) *float64 { return &v }(1.0),
+		}
+
+		err := repo.Save(childCtx, metric)
+		require.Error(t, err)
+		assert.ErrorIs(t, err, context.Canceled)
 	})
 }

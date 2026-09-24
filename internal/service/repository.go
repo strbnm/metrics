@@ -1,9 +1,13 @@
 package service
 
-import models "github.com/strbnm/metrics/internal/model"
+import (
+	"context"
+
+	models "github.com/strbnm/metrics/internal/model"
+)
 
 type Repository interface {
-	Save(metric models.Metrics) error
-	Get(id string, mType string) (models.Metrics, error)
-	List() ([]models.Metrics, error)
+	Save(ctx context.Context, metric models.Metrics) error
+	Get(ctx context.Context, id string, mType string) (models.Metrics, error)
+	List(ctx context.Context) ([]models.Metrics, error)
 }
