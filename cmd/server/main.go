@@ -102,7 +102,9 @@ func run(appLogger *zap.SugaredLogger) error {
 	}
 
 	// Финальное сохранение метрик
-	if errFlush := fileStorage.Flush(); errFlush != nil {
+	flushCtx, flushCancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer flushCancel()
+	if errFlush := fileStorage.Flush(flushCtx); errFlush != nil {
 		appLogger.Errorf("final flush failed: %v", errFlush)
 	} else {
 		appLogger.Info("final flush completed")
@@ -118,7 +120,7 @@ func runPeriodicSave(ctx context.Context, r *repository.FileStorage, interval ti
 	for {
 		select {
 		case <-ticker.C:
-			if err := r.Flush(); err != nil {
+			if err := r.Flush(ctx); err != nil {
 				appLogger.Errorf("periodic save failed: %v", err)
 			} else {
 				appLogger.Infow("periodic save completed")
