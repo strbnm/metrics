@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"database/sql"
 	"errors"
 	"fmt"
 	"log"
@@ -12,7 +11,7 @@ import (
 	"syscall"
 	"time"
 
-	_ "github.com/jackc/pgx/v5/stdlib"
+	"github.com/strbnm/metrics/internal/config/db"
 	config "github.com/strbnm/metrics/internal/config/server"
 	"github.com/strbnm/metrics/internal/handler"
 	"github.com/strbnm/metrics/internal/logger"
@@ -45,37 +44,55 @@ func run(appLogger *zap.SugaredLogger) error {
 		return fmt.Errorf("main: configuration parsing failed %w", err)
 	}
 
-	var dbStorage *repository.DBStorage
-	if cfg.DatabaseConfig.DatabaseDSN != "" {
-		db, err := sql.Open("pgx", cfg.DatabaseConfig.DatabaseDSN)
-		if err != nil {
-			appLogger.Errorf("db open failed %v", err)
-		}
-		defer db.Close()
-		// Проверка реального подключения на старте
-		pingCtx, pingCancel := context.WithTimeout(context.Background(), 3*time.Second)
-		defer pingCancel()
-		if err = db.PingContext(pingCtx); err != nil {
-			appLogger.Errorf("db ping failed %v", err)
-		}
-		dbStorage = repository.NewDBStorage(db)
-		appLogger.Info("database connection established")
-	}
-
-	isSyncFlush := cfg.Store.StoreInterval == 0
-	fileStorage := repository.NewFileStorage(cfg.Store.FileStoragePath, isSyncFlush, cfg.Store.Restore, appLogger)
-	metricsService := service.NewMetricsService(fileStorage, appLogger)
-
 	ctx, stop := signal.NotifyContext(context.Background(),
-		syscall.SIGINT, syscall.SIGTERM)
+	syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
-	// Запускаем периодическое сохранение в горутине
-	if !isSyncFlush {
-		go runPeriodicSave(ctx, fileStorage, cfg.Store.StoreInterval, appLogger)
-	}
+	var storage service.Repository
+	var pinger handler.Pinger
+	var fileStorage *repository.FileStorage
 
-	h := handler.NewHandler(metricsService, appLogger)
+    switch {
+    case cfg.DatabaseConfig.DatabaseDSN != "":
+        // приоритет 1 — база данных
+        dbCfg := db.DefaultConfig(cfg.DatabaseConfig.DatabaseDSN)
+        dbConn, err := db.NewPostgresConnection(dbCfg)
+        if err != nil {
+            return fmt.Errorf("main: db connection failed: %w", err)
+        }
+        defer dbConn.Close()
+
+        if err := db.RunMigrations(dbConn); err != nil {
+            return fmt.Errorf("main: migrations failed: %w", err)
+        }
+        appLogger.Info("database connection established")
+
+        dbStorage := repository.NewDBStorage(dbConn)
+        storage = dbStorage
+		pinger = dbStorage
+
+    case cfg.Store.FileStoragePath != "":
+        // приоритет 2 — файловое хранилище
+        isSyncFlush := cfg.Store.StoreInterval == 0
+        fileStorage = repository.NewFileStorage(
+            cfg.Store.FileStoragePath, isSyncFlush, cfg.Store.Restore, appLogger,
+        )
+        storage = fileStorage
+
+        if !isSyncFlush {
+            go runPeriodicSave(ctx, fileStorage, cfg.Store.StoreInterval, appLogger)
+        }
+        appLogger.Info("file storage initialized", "path", cfg.Store.FileStoragePath)
+
+    default:
+        // приоритет 3 — in-memory
+        storage = repository.NewMemStorage()
+        appLogger.Info("in-memory storage initialized")
+    }
+
+	metricsService := service.NewMetricsService(storage, appLogger)
+
+	h := handler.NewHandler(metricsService, pinger, appLogger)
 
 	r := chi.NewRouter()
 	r.Use(middlewares.StripSlashes)
@@ -85,20 +102,10 @@ func run(appLogger *zap.SugaredLogger) error {
 	r.Route("/", func(r chi.Router) {
 		r.Get("/", h.ListAllMetricsHandler)
 		r.Get("/value/{metricType}/{metricName}", h.ValueHandler)
+		r.Get("/ping", h.Ping)
 		r.Post("/update/{metricType}/{metricName}/{metricValue}", h.UpdateHandler)
 		r.Post("/update", h.UpdateJSONHandler)
 		r.Post("/value", h.ValueJSONHandler)
-		// пинг-хендлер — только если БД подключена
-		if dbStorage != nil {
-			r.Get("/ping", func(w http.ResponseWriter, req *http.Request) {
-				if err := dbStorage.Ping(req.Context()); err != nil {
-					appLogger.Errorf("db ping failed: %v", err)
-					http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
-					return
-				}
-				w.WriteHeader(http.StatusOK)
-			})
-		}
 	})
 
 	srv := &http.Server{
@@ -132,12 +139,14 @@ func run(appLogger *zap.SugaredLogger) error {
 	}
 
 	// Финальное сохранение метрик
-	flushCtx, flushCancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer flushCancel()
-	if errFlush := fileStorage.Flush(flushCtx); errFlush != nil {
-		appLogger.Errorf("final flush failed: %v", errFlush)
-	} else {
-		appLogger.Info("final flush completed")
+	if fileStorage != nil {
+		flushCtx, flushCancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer flushCancel()
+		if errFlush := fileStorage.Flush(flushCtx); errFlush != nil {
+			appLogger.Errorf("final flush failed: %v", errFlush)
+		} else {
+			appLogger.Info("final flush completed")
+		}
 	}
 
 	return nil
