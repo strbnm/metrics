@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"fmt"
 	"log"
@@ -11,6 +12,7 @@ import (
 	"syscall"
 	"time"
 
+	_ "github.com/jackc/pgx/v5/stdlib"
 	config "github.com/strbnm/metrics/internal/config/server"
 	"github.com/strbnm/metrics/internal/handler"
 	"github.com/strbnm/metrics/internal/logger"
@@ -43,6 +45,23 @@ func run(appLogger *zap.SugaredLogger) error {
 		return fmt.Errorf("main: configuration parsing failed %w", err)
 	}
 
+	var dbStorage *repository.DBStorage
+	if cfg.DatabaseConfig.DatabaseDSN != "" {
+		db, err := sql.Open("pgx", cfg.DatabaseConfig.DatabaseDSN)
+		if err != nil {
+			appLogger.Errorf("db open failed %v", err)
+		}
+		defer db.Close()
+		// Проверка реального подключения на старте
+		pingCtx, pingCancel := context.WithTimeout(context.Background(), 3*time.Second)
+		defer pingCancel()
+		if err = db.PingContext(pingCtx); err != nil {
+			appLogger.Errorf("db ping failed %v", err)
+		}
+		dbStorage = repository.NewDBStorage(db)
+		appLogger.Info("database connection established")
+	}
+
 	isSyncFlush := cfg.Store.StoreInterval == 0
 	fileStorage := repository.NewFileStorage(cfg.Store.FileStoragePath, isSyncFlush, cfg.Store.Restore, appLogger)
 	metricsService := service.NewMetricsService(fileStorage, appLogger)
@@ -69,6 +88,17 @@ func run(appLogger *zap.SugaredLogger) error {
 		r.Post("/update/{metricType}/{metricName}/{metricValue}", h.UpdateHandler)
 		r.Post("/update", h.UpdateJSONHandler)
 		r.Post("/value", h.ValueJSONHandler)
+		// пинг-хендлер — только если БД подключена
+		if dbStorage != nil {
+			r.Get("/ping", func(w http.ResponseWriter, req *http.Request) {
+				if err := dbStorage.Ping(req.Context()); err != nil {
+					appLogger.Errorf("db ping failed: %v", err)
+					http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
+					return
+				}
+				w.WriteHeader(http.StatusOK)
+			})
+		}
 	})
 
 	srv := &http.Server{
