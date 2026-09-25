@@ -133,7 +133,7 @@ func TestHandler_UpdateHandler(t *testing.T) {
 			repo := repository.NewMemStorage()
 			testLogger := zap.NewNop().Sugar()
 			srv := service.NewMetricsService(repo, testLogger)
-			h := NewHandler(srv, testLogger)
+			h := NewHandler(srv, nil, testLogger)
 
 			r := chi.NewRouter()
 			r.Route("/", func(r chi.Router) {
@@ -248,7 +248,7 @@ func TestHandler_ValueHandler(t *testing.T) {
 			// создаём новый Recorder
 			w := httptest.NewRecorder()
 
-			h := NewHandler(srv, testLogger)
+			h := NewHandler(srv, nil, testLogger)
 
 			r := chi.NewRouter()
 			r.Route("/", func(r chi.Router) {
@@ -360,7 +360,7 @@ func TestHandler_ListAllMetricsHandler(t *testing.T) {
 		// создаём новый Recorder
 		w := httptest.NewRecorder()
 
-		h := NewHandler(srv, testLogger)
+		h := NewHandler(srv, nil, testLogger)
 
 		r := chi.NewRouter()
 		r.Route("/", func(r chi.Router) {
@@ -525,7 +525,7 @@ func TestHandler_UpdateJSONHandler(t *testing.T) {
 			repo := repository.NewMemStorage()
 			testLogger := zap.NewNop().Sugar()
 			srv := service.NewMetricsService(repo, testLogger)
-			h := NewHandler(srv, testLogger)
+			h := NewHandler(srv, nil, testLogger)
 
 			r := chi.NewRouter()
 			r.Route("/", func(r chi.Router) {
@@ -654,7 +654,7 @@ func TestHandler_ValueJSONHandler(t *testing.T) {
 			// создаём новый Recorder
 			w := httptest.NewRecorder()
 
-			h := NewHandler(srv, testLogger)
+			h := NewHandler(srv, nil, testLogger)
 
 			r := chi.NewRouter()
 			r.Route("/", func(r chi.Router) {

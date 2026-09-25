@@ -23,14 +23,20 @@ type MetricsService interface {
 	GetMetric(ctx context.Context, m *models.Metrics) error
 }
 
+type Pinger interface {
+	Ping(ctx context.Context) error
+}
+
 type Handler struct {
 	service MetricsService
+	pinger Pinger
 	logger  *zap.SugaredLogger
 }
 
-func NewHandler(service MetricsService, logger *zap.SugaredLogger) *Handler {
+func NewHandler(service MetricsService, pinger Pinger, logger *zap.SugaredLogger) *Handler {
 	return &Handler{
 		service: service,
+		pinger: pinger,
 		logger:  logger,
 	}
 
@@ -182,4 +188,18 @@ func (h *Handler) ValueJSONHandler(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		return
 	}
+}
+
+func (h *Handler) Ping(w http.ResponseWriter, r *http.Request) {
+    if h.pinger == nil {
+        // БД не настроена — возвращаем 500
+        http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
+        return
+    }
+    if err := h.pinger.Ping(r.Context()); err != nil {
+        h.logger.Errorf("db ping failed: %v", err)
+        http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
+        return
+    }
+    w.WriteHeader(http.StatusOK)
 }
