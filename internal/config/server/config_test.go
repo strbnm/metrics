@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/strbnm/metrics/internal/config/db"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -14,6 +15,9 @@ func TestNewServerConfig(t *testing.T) {
 	cfg := NewServerConfig()
 
 	assert.Equal(t, "localhost:8080", cfg.RunAddr, "RunAddr должен быть 'localhost:8080' по умолчанию")
+	assert.Equal(t, 300 * time.Second, cfg.Store.StoreInterval, "StoreInterval должен быть 300 сек. по умолчанию")
+	assert.Equal(t, "metrics.json", cfg.Store.FileStoragePath, "FileStoragePath должен быть 'metrics.json' по умолчанию")
+	assert.Equal(t, true, cfg.Store.Restore, "Restore должен быть 'true' по умолчанию")
 }
 
 func TestValidateRunAddr(t *testing.T) {
@@ -105,6 +109,9 @@ func TestParseFlags(t *testing.T) {
 					FileStoragePath: "metrics.json",
 					Restore:         true,
 				},
+				DatabaseConfig: db.DatabaseConfig{
+					DatabaseDSN: "",
+				},
 			},
 		},
 		{
@@ -174,6 +181,23 @@ func TestParseFlags(t *testing.T) {
 					StoreInterval:   300 * time.Second,
 					FileStoragePath: "metrics.json",
 					Restore:         false,
+				},
+			},
+		},
+		{
+			name:    "Custom databaseDSN flag via flags (env not set)",
+			args:    []string{"cmd", "-d=host=localhost user=test_user dbname=test_db password=xxx sslmode=disable"},
+			env:     nil,
+			wantErr: false,
+			expected: &Config{
+				RunAddr: "localhost:8080",
+				Store: StoreConfig{
+					StoreInterval:   300 * time.Second,
+					FileStoragePath: "metrics.json",
+					Restore:         true,
+				},
+				DatabaseConfig: db.DatabaseConfig{
+					DatabaseDSN: "host=localhost user=test_user dbname=test_db password=xxx sslmode=disable",
 				},
 			},
 		},
@@ -258,6 +282,25 @@ func TestParseFlags(t *testing.T) {
 			},
 		},
 		{
+			name:    "Env overrides via flags DatabaseDSN",
+			args:    []string{"cmd", "-d=host=localhost user=test_user dbname=test_db password=xxx sslmode=disable"},
+			env: map[string]string{
+				"DATABASE_DSN": "host=test_env_host user=env_user dbname=env_db password=xxx sslmode=disable",
+			},
+			wantErr: false,
+			expected: &Config{
+				RunAddr: "localhost:8080",
+				Store: StoreConfig{
+					StoreInterval:   300 * time.Second,
+					FileStoragePath: "metrics.json",
+					Restore:         true,
+				},
+				DatabaseConfig: db.DatabaseConfig{
+					DatabaseDSN: "host=test_env_host user=env_user dbname=env_db password=xxx sslmode=disable",
+				},
+			},
+		},
+		{
 			name: "Invalid env value for STORE_INTERVAL (fallback to flag)",
 			args: []string{"cmd", "-i", "10"},
 			env: map[string]string{
@@ -311,7 +354,7 @@ func TestParseFlags(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			originalEnv := make(map[string]*string)
-			for _, key := range []string{"ADDRESS", "STORE_INTERVAL", "FILE_STORAGE_PATH", "RESTORE"} {
+			for _, key := range []string{"ADDRESS", "STORE_INTERVAL", "FILE_STORAGE_PATH", "RESTORE", "DATABASE_DSN"} {
 				if val, ok := os.LookupEnv(key); ok {
 					originalEnv[key] = &val
 				} else {
@@ -355,6 +398,8 @@ func TestParseFlags(t *testing.T) {
 					"Store.FileStoragePath должно совпадать с ожидаемым")
 				assert.Equal(t, tt.expected.Store.Restore, cfg.Store.Restore,
 					"Store.Restore должен совпадать с ожидаемым")
+				assert.Equal(t, tt.expected.DatabaseConfig.DatabaseDSN, cfg.DatabaseConfig.DatabaseDSN,
+					"DatabaseConfig.DatabaseDSN должен совпадать с ожидаемым")
 			}
 		})
 	}
