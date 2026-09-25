@@ -33,6 +33,7 @@ func NewServerConfig() *Config {
 			FileStoragePath: "metrics.json",
 			Restore:         true,
 		},
+		DatabaseConfig: db.DatabaseConfig{},
 	}
 }
 
