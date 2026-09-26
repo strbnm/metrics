@@ -26,17 +26,18 @@ func NewSender(serverURL string) (*Sender, error) {
 }
 
 func (s *Sender) Send(metrics []models.Metrics) error {
-	for _, metric := range metrics {
-		err := s.sendMetric(&metric)
-		if err != nil {
-			return fmt.Errorf("failed to send metric %s: %w", metric.ID, err)
-		}
+	if len(metrics) == 0 {
+		return nil
 	}
+	err := s.sendMetrics(&metrics)
+	if err != nil {
+		return fmt.Errorf("failed to send batch of %d metrics: %w", len(metrics), err)
+	}
+
 	return nil
 }
 
 func (s *Sender) sendMetric(metric *models.Metrics) error {
-	// 1. Маршалинг структуры в JSON байты
 	data, err := json.Marshal(metric)
 	if err != nil {
 		return fmt.Errorf("failed to marshal metric: %w", err)
@@ -53,6 +54,34 @@ func (s *Sender) sendMetric(metric *models.Metrics) error {
 		SetHeader("Accept-Encoding", "gzip").
 		SetHeader("Content-Encoding", "gzip").
 		Post("/update")
+	if err != nil {
+		return err
+	}
+
+	if resp.StatusCode() != http.StatusOK {
+		return fmt.Errorf("server returned status: %d", resp.StatusCode())
+	}
+
+	return nil
+}
+
+func (s *Sender) sendMetrics(metrics *[]models.Metrics) error {
+	data, err := json.Marshal(metrics)
+	if err != nil {
+		return fmt.Errorf("failed to marshal metrics: %w", err)
+	}
+
+	compressed, err := compress.Compress(data)
+	if err != nil {
+		return fmt.Errorf("failed to compress metrics: %w", err)
+	}
+
+	resp, err := s.client.R().
+		SetBody(compressed).
+		SetHeader("Content-Type", "application/json; charset=utf-8").
+		SetHeader("Accept-Encoding", "gzip").
+		SetHeader("Content-Encoding", "gzip").
+		Post("/updates")
 	if err != nil {
 		return err
 	}
