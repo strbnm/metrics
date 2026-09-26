@@ -49,7 +49,7 @@ func testRepositoryContract(ctx context.Context, t *testing.T, newRepo func() se
 
 		_, err := repo.Get(ctx, "NonExistent", models.Gauge)
 		require.Error(t, err)
-		assert.Contains(t, err.Error(), "metric not found")
+		assert.ErrorIs(t, err, ErrMetricNotFound)
 	})
 
 	t.Run("list empty storage", func(t *testing.T) {
@@ -106,7 +106,7 @@ func testRepositoryContract(ctx context.Context, t *testing.T, newRepo func() se
 
 		err := repo.Save(ctx, metric)
 		require.Error(t, err)
-		assert.Contains(t, err.Error(), "gauge metric must have a value")
+		assert.ErrorIs(t, err, ErrGaugeMetricIsEmptyValue)
 	})
 
 	t.Run("counter without delta returns error", func(t *testing.T) {
@@ -120,7 +120,7 @@ func testRepositoryContract(ctx context.Context, t *testing.T, newRepo func() se
 
 		err := repo.Save(ctx, metric)
 		require.Error(t, err)
-		assert.Contains(t, err.Error(), "counter metric must have a delta")
+		assert.ErrorIs(t, err, ErrCounterMetricIsEmptyValue)
 	})
 
 	t.Run("update existing gauge_value returns new value", func(t *testing.T) {
@@ -185,7 +185,7 @@ func testRepositoryContract(ctx context.Context, t *testing.T, newRepo func() se
 
 		err := repo.Save(ctx, metric)
 		require.Error(t, err)
-		assert.Contains(t, err.Error(), "unknown metric type")
+		assert.ErrorIs(t, err, ErrInvalidMetricType)
 	})
 
 	t.Run("save with canceled context returns error", func(t *testing.T) {
