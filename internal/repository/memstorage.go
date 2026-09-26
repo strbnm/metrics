@@ -2,7 +2,6 @@ package repository
 
 import (
 	"context"
-	"errors"
 	"sync"
 
 	models "github.com/strbnm/metrics/internal/model"
@@ -31,12 +30,12 @@ func (r *MemStorage) Save(ctx context.Context, metric models.Metrics) error {
 	switch metric.MType {
 	case models.Gauge:
 		if metric.Value == nil {
-			return errors.New("gauge metric must have a value")
+			return ErrGaugeMetricIsEmptyValue
 		}
 		r.metrics[key] = metric
 	case models.Counter:
 		if metric.Delta == nil {
-			return errors.New("counter metric must have a delta")
+			return ErrCounterMetricIsEmptyValue
 		}
 		if existing, ok := r.metrics[key]; ok {
 			existingDelta := *existing.Delta
@@ -50,7 +49,7 @@ func (r *MemStorage) Save(ctx context.Context, metric models.Metrics) error {
 			r.metrics[key] = metric
 		}
 	default:
-		return errors.New("unknown metric type")
+		return ErrInvalidMetricType
 	}
 
 	return nil
@@ -67,7 +66,7 @@ func (r *MemStorage) Get(ctx context.Context, id string, mType string) (models.M
 	key := buildKey(id, mType)
 	metric, ok := r.metrics[key]
 	if !ok {
-		return models.Metrics{}, errors.New("metric not found")
+		return models.Metrics{}, ErrMetricNotFound
 	}
 	return metric, nil
 }
