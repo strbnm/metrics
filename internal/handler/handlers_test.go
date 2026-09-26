@@ -2,24 +2,22 @@ package handler
 
 import (
 	"bytes"
-	"context"
 	"encoding/json"
-	"fmt"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/golang/mock/gomock"
 	models "github.com/strbnm/metrics/internal/model"
 	"github.com/strbnm/metrics/internal/service"
+	"github.com/strbnm/metrics/internal/service/mock"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/zap"
-
-	"github.com/strbnm/metrics/internal/repository"
 )
 
 func TestHandler_UpdateHandler(t *testing.T) {
@@ -29,15 +27,17 @@ func TestHandler_UpdateHandler(t *testing.T) {
 		contentType string
 	}
 	tests := []struct {
-		name   string
-		url    string
-		method string
-		want   want
+		name       string
+		url        string
+		method     string
+		expectSave bool
+		want       want
 	}{
 		{
-			name:   "positive test #1",
-			url:    "/update/gauge/Alloc/1.0001",
-			method: http.MethodPost,
+			name:       "positive test #1",
+			url:        "/update/gauge/Alloc/1.0001",
+			method:     http.MethodPost,
+			expectSave: true,
 			want: want{
 				code:        200,
 				response:    "OK",
@@ -45,9 +45,10 @@ func TestHandler_UpdateHandler(t *testing.T) {
 			},
 		},
 		{
-			name:   "positive test #2",
-			url:    "/update/counter/PollCount/100",
-			method: http.MethodPost,
+			name:       "positive test #2",
+			url:        "/update/counter/PollCount/100",
+			method:     http.MethodPost,
+			expectSave: true,
 			want: want{
 				code:        200,
 				response:    "OK",
@@ -55,9 +56,10 @@ func TestHandler_UpdateHandler(t *testing.T) {
 			},
 		},
 		{
-			name:   "negative test #3 - not allowed path",
-			url:    "/create/counter/PollCount/100",
-			method: http.MethodPost,
+			name:       "negative test #3 - not allowed path",
+			url:        "/create/counter/PollCount/100",
+			method:     http.MethodPost,
+			expectSave: false,
 			want: want{
 				code:        404,
 				response:    "404 page not found\n",
@@ -65,9 +67,10 @@ func TestHandler_UpdateHandler(t *testing.T) {
 			},
 		},
 		{
-			name:   "negative test #4 - not allowed metric type",
-			url:    "/update/histogram/SomeHist/100",
-			method: http.MethodPost,
+			name:       "negative test #4 - not allowed metric type",
+			url:        "/update/histogram/SomeHist/100",
+			method:     http.MethodPost,
+			expectSave: false,
 			want: want{
 				code:        400,
 				response:    "Invalid metric type\n",
@@ -75,9 +78,10 @@ func TestHandler_UpdateHandler(t *testing.T) {
 			},
 		},
 		{
-			name:   "negative test #5 - without metric name",
-			url:    "/update/gauge/100",
-			method: http.MethodPost,
+			name:       "negative test #5 - without metric name",
+			url:        "/update/gauge/100",
+			method:     http.MethodPost,
+			expectSave: false,
 			want: want{
 				code:        404,
 				response:    "404 page not found\n",
@@ -85,9 +89,10 @@ func TestHandler_UpdateHandler(t *testing.T) {
 			},
 		},
 		{
-			name:   "negative test #6 - without metric value",
-			url:    "/update/gauge/Alloc",
-			method: http.MethodPost,
+			name:       "negative test #6 - without metric value",
+			url:        "/update/gauge/Alloc",
+			method:     http.MethodPost,
+			expectSave: false,
 			want: want{
 				code:        404,
 				response:    "404 page not found\n",
@@ -95,9 +100,10 @@ func TestHandler_UpdateHandler(t *testing.T) {
 			},
 		},
 		{
-			name:   "negative test #7 - invalid metric value",
-			url:    "/update/gauge/Alloc/invalid_value",
-			method: http.MethodPost,
+			name:       "negative test #7 - invalid metric value",
+			url:        "/update/gauge/Alloc/invalid_value",
+			method:     http.MethodPost,
+			expectSave: false,
 			want: want{
 				code:        400,
 				response:    "Invalid metric value\n",
@@ -105,9 +111,10 @@ func TestHandler_UpdateHandler(t *testing.T) {
 			},
 		},
 		{
-			name:   "negative test #8 - invalid metric value",
-			url:    "/update/counter/PullCount/invalid_value",
-			method: http.MethodPost,
+			name:       "negative test #8 - invalid metric value",
+			url:        "/update/counter/PullCount/invalid_value",
+			method:     http.MethodPost,
+			expectSave: false,
 			want: want{
 				code:        400,
 				response:    "Invalid metric value\n",
@@ -115,9 +122,10 @@ func TestHandler_UpdateHandler(t *testing.T) {
 			},
 		},
 		{
-			name:   "negative test #9 - invalid method",
-			url:    "/update/counter/PullCount/invalid_value",
-			method: http.MethodGet,
+			name:       "negative test #9 - invalid method",
+			url:        "/update/counter/PullCount/invalid_value",
+			method:     http.MethodGet,
+			expectSave: false,
 			want: want{
 				code:        405,
 				response:    "", //chi не возвращает стандартные ответы для 405
@@ -127,12 +135,20 @@ func TestHandler_UpdateHandler(t *testing.T) {
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
+			ctrl := gomock.NewController(t)
+			mockRepo := mock.NewMockRepository(ctrl)
+
+			if test.expectSave {
+				mockRepo.EXPECT().
+					Save(gomock.Any(), gomock.Any()).
+					Return(nil)
+			}
+
 			request := httptest.NewRequest(test.method, test.url, nil)
 			// создаём новый Recorder
 			w := httptest.NewRecorder()
-			repo := repository.NewMemStorage()
 			testLogger := zap.NewNop().Sugar()
-			srv := service.NewMetricsService(repo, testLogger)
+			srv := service.NewMetricsService(mockRepo, testLogger)
 			h := NewHandler(srv, nil, testLogger)
 
 			r := chi.NewRouter()
@@ -165,10 +181,11 @@ func TestHandler_ValueHandler(t *testing.T) {
 		contentType string
 	}
 	tests := []struct {
-		name   string
-		url    string
-		method string
-		want   want
+		name    string
+		url     string
+		method  string
+		want    want
+		getFunc func(m *mock.MockRepository)
 	}{
 		{
 			name:   "positive test #1",
@@ -178,6 +195,16 @@ func TestHandler_ValueHandler(t *testing.T) {
 				code:        200,
 				response:    "1.000001",
 				contentType: "text/plain; charset=utf-8",
+			},
+			getFunc: func(m *mock.MockRepository) {
+				val := 1.000001
+				m.EXPECT().
+					Get(gomock.Any(), "Alloc", models.Gauge).
+					Return(models.Metrics{
+						ID:    "Alloc",
+						MType: models.Gauge,
+						Value: &val,
+					}, nil)
 			},
 		},
 		{
@@ -189,11 +216,22 @@ func TestHandler_ValueHandler(t *testing.T) {
 				response:    "100",
 				contentType: "text/plain; charset=utf-8",
 			},
+			getFunc: func(m *mock.MockRepository) {
+				delta := int64(100)
+				m.EXPECT().
+					Get(gomock.Any(), "PollCount", models.Counter).
+					Return(models.Metrics{
+						ID:    "PollCount",
+						MType: models.Counter,
+						Delta: &delta,
+					}, nil)
+			},
 		},
 		{
-			name:   "negative test #3 - not allowed path",
-			url:    "/value/counter/PollCount/100",
-			method: http.MethodGet,
+			name:    "negative test #3 - not allowed path",
+			url:     "/value/counter/PollCount/100",
+			method:  http.MethodGet,
+			getFunc: nil, // chi вернёт 404 до хендлера
 			want: want{
 				code:        404,
 				response:    "404 page not found\n",
@@ -201,9 +239,10 @@ func TestHandler_ValueHandler(t *testing.T) {
 			},
 		},
 		{
-			name:   "negative test #4 - not allowed metric type",
-			url:    "/value/histogram/PollCount",
-			method: http.MethodGet,
+			name:    "negative test #4 - not allowed metric type",
+			url:     "/value/histogram/PollCount",
+			method:  http.MethodGet,
+			getFunc: nil, // хендлер отдаёт 400 до вызова Get
 			want: want{
 				code:        400,
 				response:    "Invalid metric type\n",
@@ -219,11 +258,17 @@ func TestHandler_ValueHandler(t *testing.T) {
 				response:    "metric not found\n",
 				contentType: "text/plain; charset=utf-8",
 			},
+			getFunc: func(m *mock.MockRepository) {
+				m.EXPECT().
+					Get(gomock.Any(), "SomeName", models.Gauge).
+					Return(models.Metrics{}, errors.New("metric not found"))
+			},
 		},
 		{
-			name:   "negative test #6 - invalid method",
-			url:    "/value/gauge/Alloc",
-			method: http.MethodPost,
+			name:    "negative test #6 - invalid method",
+			url:     "/value/gauge/Alloc",
+			method:  http.MethodPost,
+			getFunc: nil, // chi вернёт 405 до хендлера
 			want: want{
 				code:        405,
 				response:    "",
@@ -231,23 +276,18 @@ func TestHandler_ValueHandler(t *testing.T) {
 			},
 		},
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-
-	repo := repository.NewMemStorage()
-	testLogger := zap.NewNop().Sugar()
-	srv := service.NewMetricsService(repo, testLogger)
-	err := srv.UpdateMetric(ctx, models.Gauge, "Alloc", "1.000001")
-	require.NoError(t, err)
-	err = srv.UpdateMetric(ctx, models.Counter, "PollCount", "100")
-	require.NoError(t, err)
 
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			request := httptest.NewRequest(test.method, test.url, nil)
-			// создаём новый Recorder
-			w := httptest.NewRecorder()
+			ctrl := gomock.NewController(t)
+			mockRepo := mock.NewMockRepository(ctrl)
 
+			if test.getFunc != nil {
+				test.getFunc(mockRepo)
+			}
+
+			testLogger := zap.NewNop().Sugar()
+			srv := service.NewMetricsService(mockRepo, testLogger)
 			h := NewHandler(srv, nil, testLogger)
 
 			r := chi.NewRouter()
@@ -257,15 +297,16 @@ func TestHandler_ValueHandler(t *testing.T) {
 				r.Post("/update/{metricType}/{metricName}/{metricValue}", h.UpdateHandler)
 			})
 
+			request := httptest.NewRequest(test.method, test.url, nil)
+			w := httptest.NewRecorder()
 			r.ServeHTTP(w, request)
 
 			res := w.Result()
-			// проверяем код ответа
-			assert.Equal(t, test.want.code, res.StatusCode)
-			// получаем и проверяем тело запроса
 			defer res.Body.Close()
-			resBody, err := io.ReadAll(res.Body)
 
+			assert.Equal(t, test.want.code, res.StatusCode)
+
+			resBody, err := io.ReadAll(res.Body)
 			require.NoError(t, err)
 			assert.Equal(t, test.want.response, string(resBody))
 			assert.Equal(t, test.want.contentType, res.Header.Get("Content-Type"))
@@ -325,42 +366,39 @@ func Test_generateMetricsText(t *testing.T) {
 }
 
 func TestHandler_ListAllMetricsHandler(t *testing.T) {
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	ctrl := gomock.NewController(t)
+	mockRepo := mock.NewMockRepository(ctrl)
 
-	var err error
-	repo := repository.NewMemStorage()
-	for _, metric := range []models.Metrics{
-		{
-			MType: models.Gauge,
-			ID:    "Alloc",
-			Value: func(v float64) *float64 { return &v }(1.000001),
-		},
-		{
-			MType: models.Counter,
-			ID:    "PollCount",
-			Delta: func(v int64) *int64 { return &v }(100),
-		},
-		{
-			MType: models.Gauge,
-			ID:    "HeapAlloc",
-			Value: func(v float64) *float64 { return &v }(10.1000015),
-		},
-	} {
-		err = repo.Save(ctx, metric)
-		require.NoError(t, err)
-	}
+	mockRepo.EXPECT().
+		List(gomock.Any()).
+		Return([]models.Metrics{
+			{
+				MType: models.Gauge,
+				ID:    "Alloc",
+				Value: func(v float64) *float64 { return &v }(1.000001),
+			},
+			{
+				MType: models.Counter,
+				ID:    "PollCount",
+				Delta: func(v int64) *int64 { return &v }(100),
+			},
+			{
+				MType: models.Gauge,
+				ID:    "HeapAlloc",
+				Value: func(v float64) *float64 { return &v }(10.1000015),
+			},
+		}, nil)
+
 	testLogger := zap.NewNop().Sugar()
-	srv := service.NewMetricsService(repo, testLogger)
+	srv := service.NewMetricsService(mockRepo, testLogger)
+	h := NewHandler(srv, nil, testLogger)
+
 	expectedBody := "Alloc - 1.000001\nHeapAlloc - 10.1000015\nPollCount - 100\n"
 	expectedContentType := "text/html; charset=utf-8"
 
 	t.Run("positive test - get list all metrics", func(t *testing.T) {
 		request := httptest.NewRequest(http.MethodGet, "/", nil)
-		// создаём новый Recorder
 		w := httptest.NewRecorder()
-
-		h := NewHandler(srv, nil, testLogger)
 
 		r := chi.NewRouter()
 		r.Route("/", func(r chi.Router) {
@@ -372,7 +410,6 @@ func TestHandler_ListAllMetricsHandler(t *testing.T) {
 		r.ServeHTTP(w, request)
 
 		res := w.Result()
-
 		assert.Equal(t, 200, res.StatusCode)
 
 		defer res.Body.Close()
@@ -391,17 +428,19 @@ func TestHandler_UpdateJSONHandler(t *testing.T) {
 		contentType string
 	}
 	tests := []struct {
-		name   string
-		url    string
-		method string
-		body   []byte
-		want   want
+		name       string
+		url        string
+		method     string
+		expectSave bool
+		body       []byte
+		want       want
 	}{
 		{
-			name:   "positive test #1",
-			url:    "/update",
-			body:   []byte(`{"type":"gauge","id":"Alloc","value":1.0001}`),
-			method: http.MethodPost,
+			name:       "positive test #1",
+			url:        "/update",
+			body:       []byte(`{"type":"gauge","id":"Alloc","value":1.0001}`),
+			method:     http.MethodPost,
+			expectSave: true,
 			want: want{
 				code:        200,
 				response:    "OK",
@@ -409,10 +448,11 @@ func TestHandler_UpdateJSONHandler(t *testing.T) {
 			},
 		},
 		{
-			name:   "positive test #2",
-			url:    "/update",
-			body:   []byte(`{"type":"counter","id":"PollCount","delta":100}`),
-			method: http.MethodPost,
+			name:       "positive test #2",
+			url:        "/update",
+			body:       []byte(`{"type":"counter","id":"PollCount","delta":100}`),
+			method:     http.MethodPost,
+			expectSave: true,
 			want: want{
 				code:        200,
 				response:    "OK",
@@ -420,9 +460,10 @@ func TestHandler_UpdateJSONHandler(t *testing.T) {
 			},
 		},
 		{
-			name:   "negative test #3 - not allowed path",
-			url:    "/create",
-			method: http.MethodPost,
+			name:       "negative test #3 - not allowed path",
+			url:        "/create",
+			method:     http.MethodPost,
+			expectSave: false,
 			want: want{
 				code:        404,
 				response:    "404 page not found",
@@ -430,10 +471,11 @@ func TestHandler_UpdateJSONHandler(t *testing.T) {
 			},
 		},
 		{
-			name:   "negative test #4 - not allowed metric type",
-			url:    "/update",
-			body:   []byte(`{"type":"histogram","id":"PollCount","delta":100}`),
-			method: http.MethodPost,
+			name:       "negative test #4 - not allowed metric type",
+			url:        "/update",
+			body:       []byte(`{"type":"histogram","id":"PollCount","delta":100}`),
+			method:     http.MethodPost,
+			expectSave: false,
 			want: want{
 				code:        400,
 				response:    `field "type": invalid value "histogram", must be "counter" or "gauge"`,
@@ -441,10 +483,11 @@ func TestHandler_UpdateJSONHandler(t *testing.T) {
 			},
 		},
 		{
-			name:   "negative test #5 - without metric name",
-			url:    "/update",
-			body:   []byte(`{"type":"counter","delta":100}`),
-			method: http.MethodPost,
+			name:       "negative test #5 - without metric name",
+			url:        "/update",
+			body:       []byte(`{"type":"counter","delta":100}`),
+			method:     http.MethodPost,
+			expectSave: false,
 			want: want{
 				code:        400,
 				response:    `field "id": required`,
@@ -452,10 +495,11 @@ func TestHandler_UpdateJSONHandler(t *testing.T) {
 			},
 		},
 		{
-			name:   "negative test #6 - without metric value",
-			url:    "/update",
-			body:   []byte(`{"type":"counter","id":"PollCount"}`),
-			method: http.MethodPost,
+			name:       "negative test #6 - without metric value",
+			url:        "/update",
+			body:       []byte(`{"type":"counter","id":"PollCount"}`),
+			method:     http.MethodPost,
+			expectSave: false,
 			want: want{
 				code:        400,
 				response:    "Metric value is required",
@@ -463,10 +507,11 @@ func TestHandler_UpdateJSONHandler(t *testing.T) {
 			},
 		},
 		{
-			name:   "negative test #7 - invalid metric value",
-			url:    "/update",
-			body:   []byte(`{"type":"counter","id":"PollCount","delta":100.12}`),
-			method: http.MethodPost,
+			name:       "negative test #7 - invalid metric value",
+			url:        "/update",
+			body:       []byte(`{"type":"counter","id":"PollCount","delta":100.12}`),
+			method:     http.MethodPost,
+			expectSave: false,
 			want: want{
 				code:        400,
 				response:    "JSON parse error: json: cannot unmarshal number 100.12 into Go struct field MetricAlias.delta of type int64",
@@ -474,10 +519,11 @@ func TestHandler_UpdateJSONHandler(t *testing.T) {
 			},
 		},
 		{
-			name:   "negative test #8 - invalid metric value",
-			url:    "/update",
-			body:   []byte(`{"type":"gauge","id":"PollCount","value":"100"}`),
-			method: http.MethodPost,
+			name:       "negative test #8 - invalid metric value",
+			url:        "/update",
+			body:       []byte(`{"type":"gauge","id":"PollCount","value":"100"}`),
+			method:     http.MethodPost,
+			expectSave: false,
 			want: want{
 				code:        400,
 				response:    "JSON parse error: json: cannot unmarshal string into Go struct field MetricAlias.value of type float64",
@@ -485,9 +531,10 @@ func TestHandler_UpdateJSONHandler(t *testing.T) {
 			},
 		},
 		{
-			name:   "negative test #9 - invalid method",
-			url:    "/update",
-			method: http.MethodGet,
+			name:       "negative test #9 - invalid method",
+			url:        "/update",
+			method:     http.MethodGet,
+			expectSave: false,
 			want: want{
 				code:        405,
 				response:    "", //chi не возвращает стандартные ответы для 405
@@ -495,10 +542,11 @@ func TestHandler_UpdateJSONHandler(t *testing.T) {
 			},
 		},
 		{
-			name:   "negative test #10 - without metric value",
-			url:    "/update",
-			body:   []byte(`{"type":"counter","id":"PollCount","value":100.1}`),
-			method: http.MethodPost,
+			name:       "negative test #10 - without metric value",
+			url:        "/update",
+			body:       []byte(`{"type":"counter","id":"PollCount","value":100.1}`),
+			method:     http.MethodPost,
+			expectSave: false,
 			want: want{
 				code:        400,
 				response:    "Metric value is required",
@@ -506,10 +554,11 @@ func TestHandler_UpdateJSONHandler(t *testing.T) {
 			},
 		},
 		{
-			name:   "negative test #11 - without metric value",
-			url:    "/update",
-			body:   []byte(`{"type":"gauge","id":"Alloc","delta":100}`),
-			method: http.MethodPost,
+			name:       "negative test #11 - without metric value",
+			url:        "/update",
+			body:       []byte(`{"type":"gauge","id":"Alloc","delta":100}`),
+			method:     http.MethodPost,
+			expectSave: false,
 			want: want{
 				code:        400,
 				response:    "Metric value is required",
@@ -519,12 +568,19 @@ func TestHandler_UpdateJSONHandler(t *testing.T) {
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
+			ctrl := gomock.NewController(t)
+			mockRepo := mock.NewMockRepository(ctrl)
+
+			if test.expectSave {
+				mockRepo.EXPECT().
+					Save(gomock.Any(), gomock.Any()).
+					Return(nil)
+			}
 			request := httptest.NewRequest(test.method, test.url, bytes.NewBuffer(test.body))
 			// создаём новый Recorder
 			w := httptest.NewRecorder()
-			repo := repository.NewMemStorage()
 			testLogger := zap.NewNop().Sugar()
-			srv := service.NewMetricsService(repo, testLogger)
+			srv := service.NewMetricsService(mockRepo, testLogger)
 			h := NewHandler(srv, nil, testLogger)
 
 			r := chi.NewRouter()
@@ -569,11 +625,12 @@ func TestHandler_ValueJSONHandler(t *testing.T) {
 		contentType string
 	}
 	tests := []struct {
-		name   string
-		url    string
-		body   []byte
-		method string
-		want   want
+		name    string
+		url     string
+		body    []byte
+		method  string
+		want    want
+		getFunc func(m *mock.MockRepository)
 	}{
 		{
 			name:   "positive test #1",
@@ -584,6 +641,11 @@ func TestHandler_ValueJSONHandler(t *testing.T) {
 				code:        200,
 				metric:      &testGaugeMetric,
 				contentType: "application/json; charset=utf-8",
+			},
+			getFunc: func(m *mock.MockRepository) {
+				m.EXPECT().
+					Get(gomock.Any(), "Alloc", models.Gauge).
+					Return(testGaugeMetric, nil)
 			},
 		},
 		{
@@ -596,6 +658,11 @@ func TestHandler_ValueJSONHandler(t *testing.T) {
 				metric:      &testCounterMetric,
 				contentType: "application/json; charset=utf-8",
 			},
+			getFunc: func(m *mock.MockRepository) {
+				m.EXPECT().
+					Get(gomock.Any(), "PollCount", models.Counter).
+					Return(testCounterMetric, nil)
+			},
 		},
 		{
 			name:   "negative test #3 - not allowed path",
@@ -606,6 +673,7 @@ func TestHandler_ValueJSONHandler(t *testing.T) {
 				code:        404,
 				contentType: "text/plain; charset=utf-8",
 			},
+			getFunc: nil, // chi вернёт 404 до хендлера
 		},
 		{
 			name:   "negative test #4 - not allowed metric type",
@@ -616,6 +684,7 @@ func TestHandler_ValueJSONHandler(t *testing.T) {
 				code:        400,
 				contentType: "text/plain; charset=utf-8",
 			},
+			getFunc: nil, // chi вернёт 400 до вызова Get
 		},
 		{
 			name:   "negative test #5 - unknown metric name",
@@ -626,6 +695,11 @@ func TestHandler_ValueJSONHandler(t *testing.T) {
 				code:        404,
 				contentType: "text/plain; charset=utf-8",
 			},
+			getFunc: func(m *mock.MockRepository) {
+				m.EXPECT().
+					Get(gomock.Any(), "Alloc1", models.Gauge).
+					Return(models.Metrics{}, errors.New("metric not found"))
+			},
 		},
 		{
 			name:   "negative test #6 - invalid method",
@@ -635,26 +709,26 @@ func TestHandler_ValueJSONHandler(t *testing.T) {
 				code:        405,
 				contentType: "",
 			},
+			getFunc: nil, // chi вернёт 405 до хендлера
 		},
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-
-	repo := repository.NewMemStorage()
-	testLogger := zap.NewNop().Sugar()
-	srv := service.NewMetricsService(repo, testLogger)
-	err := srv.UpdateMetric(ctx, testGaugeMetric.MType, testGaugeMetric.ID, fmt.Sprint(*testGaugeMetric.Value))
-	require.NoError(t, err)
-	err = srv.UpdateMetric(ctx, testCounterMetric.MType, testCounterMetric.ID, fmt.Sprint(*testCounterMetric.Delta))
-	require.NoError(t, err)
 
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
+			ctrl := gomock.NewController(t)
+			mockRepo := mock.NewMockRepository(ctrl)
+
+			if test.getFunc != nil {
+				test.getFunc(mockRepo)
+			}
+
+			testLogger := zap.NewNop().Sugar()
+			srv := service.NewMetricsService(mockRepo, testLogger)
+			h := NewHandler(srv, nil, testLogger)
+
 			request := httptest.NewRequest(test.method, test.url, bytes.NewBuffer(test.body))
 			// создаём новый Recorder
 			w := httptest.NewRecorder()
-
-			h := NewHandler(srv, nil, testLogger)
 
 			r := chi.NewRouter()
 			r.Route("/", func(r chi.Router) {
@@ -674,7 +748,7 @@ func TestHandler_ValueJSONHandler(t *testing.T) {
 				// получаем и проверяем тело запроса
 				defer res.Body.Close()
 				var actual models.Metrics
-				err = json.NewDecoder(res.Body).Decode(&actual)
+				err := json.NewDecoder(res.Body).Decode(&actual)
 
 				require.NoError(t, err)
 				assert.Equal(t, test.want.metric.ID, actual.ID)
