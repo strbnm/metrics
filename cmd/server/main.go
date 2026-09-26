@@ -45,50 +45,50 @@ func run(appLogger *zap.SugaredLogger) error {
 	}
 
 	ctx, stop := signal.NotifyContext(context.Background(),
-	syscall.SIGINT, syscall.SIGTERM)
+		syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
 	var storage service.Repository
 	var pinger handler.Pinger
 	var fileStorage *repository.FileStorage
 
-    switch {
-    case cfg.DatabaseConfig.DatabaseDSN != "":
-        // приоритет 1 — база данных
-        dbCfg := db.DefaultConfig(cfg.DatabaseConfig.DatabaseDSN)
-        dbConn, err := db.NewPostgresConnection(dbCfg)
-        if err != nil {
-            return fmt.Errorf("main: db connection failed: %w", err)
-        }
-        defer dbConn.Close()
+	switch {
+	case cfg.DatabaseConfig.DatabaseDSN != "":
+		// приоритет 1 — база данных
+		dbCfg := db.DefaultConfig(cfg.DatabaseConfig.DatabaseDSN)
+		dbConn, err := db.NewPostgresConnection(dbCfg)
+		if err != nil {
+			return fmt.Errorf("main: db connection failed: %w", err)
+		}
+		defer dbConn.Close()
 
-        if err := db.RunMigrations(dbConn); err != nil {
-            return fmt.Errorf("main: migrations failed: %w", err)
-        }
-        appLogger.Info("database connection established")
+		if err := db.RunMigrations(dbConn); err != nil {
+			return fmt.Errorf("main: migrations failed: %w", err)
+		}
+		appLogger.Info("database connection established")
 
-        dbStorage := repository.NewDBStorage(dbConn)
-        storage = dbStorage
+		dbStorage := repository.NewDBStorage(dbConn)
+		storage = dbStorage
 		pinger = dbStorage
 
-    case cfg.Store.FileStoragePath != "":
-        // приоритет 2 — файловое хранилище
-        isSyncFlush := cfg.Store.StoreInterval == 0
-        fileStorage = repository.NewFileStorage(
-            cfg.Store.FileStoragePath, isSyncFlush, cfg.Store.Restore, appLogger,
-        )
-        storage = fileStorage
+	case cfg.Store.FileStoragePath != "":
+		// приоритет 2 — файловое хранилище
+		isSyncFlush := cfg.Store.StoreInterval == 0
+		fileStorage = repository.NewFileStorage(
+			cfg.Store.FileStoragePath, isSyncFlush, cfg.Store.Restore, appLogger,
+		)
+		storage = fileStorage
 
-        if !isSyncFlush {
-            go runPeriodicSave(ctx, fileStorage, cfg.Store.StoreInterval, appLogger)
-        }
-        appLogger.Info("file storage initialized", "path", cfg.Store.FileStoragePath)
+		if !isSyncFlush {
+			go runPeriodicSave(ctx, fileStorage, cfg.Store.StoreInterval, appLogger)
+		}
+		appLogger.Info("file storage initialized", "path", cfg.Store.FileStoragePath)
 
-    default:
-        // приоритет 3 — in-memory
-        storage = repository.NewMemStorage()
-        appLogger.Info("in-memory storage initialized")
-    }
+	default:
+		// приоритет 3 — in-memory
+		storage = repository.NewMemStorage()
+		appLogger.Info("in-memory storage initialized")
+	}
 
 	metricsService := service.NewMetricsService(storage, appLogger)
 
@@ -105,6 +105,7 @@ func run(appLogger *zap.SugaredLogger) error {
 		r.Get("/ping", h.Ping)
 		r.Post("/update/{metricType}/{metricName}/{metricValue}", h.UpdateHandler)
 		r.Post("/update", h.UpdateJSONHandler)
+		r.Post("/updates", h.UpdateBatchJSONHandler)
 		r.Post("/value", h.ValueJSONHandler)
 	})
 
