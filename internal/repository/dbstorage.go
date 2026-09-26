@@ -112,28 +112,30 @@ func (s *DBStorage) SaveBatch(ctx context.Context, metrics []models.Metrics) err
 	defer tx.Rollback()
 
 	stmtUpsertGauge, err := tx.PrepareContext(ctx, upsertGaugeQuery)
+	if err != nil {
+		return fmt.Errorf("prepare upsert gauge: %w", err)
+	}
 	defer stmtUpsertGauge.Close()
+
 	stmtUpsertCounter, err := tx.PrepareContext(ctx, upsertCounterQuery)
+	if err != nil {
+		return fmt.Errorf("prepare upsert counter: %w", err)
+	}
 	defer stmtUpsertCounter.Close()
 
 	for _, m := range metrics {
+		if err = validate(m); err != nil {
+			return err
+		}
 		switch m.MType {
 		case models.Gauge:
-			if m.Value == nil {
-				return ErrGaugeMetricIsEmptyValue
-			}
 			if _, err := stmtUpsertGauge.ExecContext(ctx, m.ID, m.MType, *m.Value, m.Hash); err != nil {
 				return fmt.Errorf("upsert gauge in batch: %w", err)
 			}
 		case models.Counter:
-			if m.Delta == nil {
-				return ErrCounterMetricIsEmptyValue
-			}
 			if _, err := stmtUpsertCounter.ExecContext(ctx, m.ID, m.MType, *m.Delta, m.Hash); err != nil {
 				return fmt.Errorf("upsert counter in batch: %w", err)
 			}
-		default:
-			return ErrInvalidMetricType
 		}
 	}
 
