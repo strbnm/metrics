@@ -761,6 +761,183 @@ func TestHandler_ValueJSONHandler(t *testing.T) {
 	}
 }
 
+func TestHandler_UpdateBatchJSONHandler(t *testing.T) {
+	type want struct {
+		code        int
+		response    string
+		contentType string
+	}
+	tests := []struct {
+		name        string
+		url         string
+		method      string
+		expectBatch bool
+		body        []byte
+		want        want
+	}{
+		{
+			name:        "positive test #1 - mixed batch",
+			url:         "/updates",
+			method:      http.MethodPost,
+			expectBatch: true,
+			body:        []byte(`[{"type":"gauge","id":"Alloc","value":1.0001},{"type":"counter","id":"PollCount","delta":100}]`),
+			want: want{
+				code:        200,
+				response:    "OK",
+				contentType: "text/plain; charset=utf-8",
+			},
+		},
+		{
+			name:        "positive test #2 - single gauge",
+			url:         "/updates",
+			method:      http.MethodPost,
+			expectBatch: true,
+			body:        []byte(`[{"type":"gauge","id":"HeapAlloc","value":42.5}]`),
+			want: want{
+				code:        200,
+				response:    "OK",
+				contentType: "text/plain; charset=utf-8",
+			},
+		},
+		{
+			name:        "positive test #3 - multiple counters",
+			url:         "/updates",
+			method:      http.MethodPost,
+			expectBatch: true,
+			body:        []byte(`[{"type":"counter","id":"PollCount","delta":10},{"type":"counter","id":"Requests","delta":5}]`),
+			want: want{
+				code:        200,
+				response:    "OK",
+				contentType: "text/plain; charset=utf-8",
+			},
+		},
+		{
+			name:        "negative test #4 - empty batch",
+			url:         "/updates",
+			method:      http.MethodPost,
+			expectBatch: false,
+			body:        []byte(`[]`),
+			want: want{
+				code:        400,
+				response:    "empty batch",
+				contentType: "text/plain; charset=utf-8",
+			},
+		},
+		{
+			name:        "negative test #5 - invalid JSON",
+			url:         "/updates",
+			method:      http.MethodPost,
+			expectBatch: false,
+			body:        []byte(`{not valid json`),
+			want: want{
+				code:        400,
+				response:    "invalid request body",
+				contentType: "text/plain; charset=utf-8",
+			},
+		},
+		{
+			name:        "negative test #6 - invalid metric type",
+			url:         "/updates",
+			method:      http.MethodPost,
+			expectBatch: false,
+			body:        []byte(`[{"type":"histogram","id":"PollCount","delta":100}]`),
+			want: want{
+				code:        400,
+				response:    "invalid request body",
+				contentType: "text/plain; charset=utf-8",
+			},
+		},
+		{
+			name:        "negative test #7 - empty metric name",
+			url:         "/updates",
+			method:      http.MethodPost,
+			expectBatch: false,
+			body:        []byte(`[{"type":"counter","id":"","delta":100}]`),
+			want: want{
+				code:        400,
+				response:    "invalid request body",
+				contentType: "text/plain; charset=utf-8",
+			},
+		},
+		{
+			name:        "negative test #8 - internal server error",
+			url:         "/updates",
+			method:      http.MethodPost,
+			expectBatch: true,
+			body:        []byte(`[{"type":"gauge","id":"Alloc","value":1.0}]`),
+			want: want{
+				code:        500,
+				response:    "Internal Server Error",
+				contentType: "text/plain; charset=utf-8",
+			},
+		},
+		{
+			name:        "negative test #9 - not allowed path",
+			url:         "/create",
+			method:      http.MethodPost,
+			expectBatch: false,
+			want: want{
+				code:        404,
+				response:    "404 page not found",
+				contentType: "text/plain; charset=utf-8",
+			},
+		},
+		{
+			name:        "negative test #10 - invalid method",
+			url:         "/updates",
+			method:      http.MethodGet,
+			expectBatch: false,
+			want: want{
+				code:        405,
+				response:    "",
+				contentType: "",
+			},
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			ctrl := gomock.NewController(t)
+			mockRepo := mock.NewMockRepository(ctrl)
+
+			if test.expectBatch {
+				call := mockRepo.EXPECT().
+					SaveBatch(gomock.Any(), gomock.Any()).
+					Return(nil)
+
+				if test.want.code == 500 {
+					call.Return(errors.New("db connection lost"))
+				}
+			}
+
+			var bodyReader io.Reader
+			if test.body != nil {
+				bodyReader = bytes.NewReader(test.body)
+			}
+			request := httptest.NewRequest(test.method, test.url, bodyReader)
+			w := httptest.NewRecorder()
+			testLogger := zap.NewNop().Sugar()
+			srv := service.NewMetricsService(mockRepo, testLogger)
+			h := NewHandler(srv, nil, testLogger)
+
+			r := chi.NewRouter()
+			r.Route("/", func(r chi.Router) {
+				r.Post("/updates", h.UpdateBatchJSONHandler)
+			})
+
+			r.ServeHTTP(w, request)
+
+			res := w.Result()
+			assert.Equal(t, test.want.code, res.StatusCode)
+
+			defer res.Body.Close()
+			resBody, err := io.ReadAll(res.Body)
+			require.NoError(t, err)
+			assert.Equal(t, test.want.response, strings.TrimSpace(string(resBody)))
+			assert.Equal(t, test.want.contentType, res.Header.Get("Content-Type"))
+		})
+	}
+}
+
 //go:fix inline
 func ptrInt64(v int64) *int64 { return new(v) }
 
