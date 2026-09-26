@@ -26,17 +26,15 @@ func (r *MemStorage) Save(ctx context.Context, metric models.Metrics) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
+	if err := validate(metric); err != nil {
+		return err
+	}
+
 	key := buildKey(metric.ID, metric.MType)
 	switch metric.MType {
 	case models.Gauge:
-		if metric.Value == nil {
-			return ErrGaugeMetricIsEmptyValue
-		}
 		r.metrics[key] = metric
 	case models.Counter:
-		if metric.Delta == nil {
-			return ErrCounterMetricIsEmptyValue
-		}
 		if existing, ok := r.metrics[key]; ok {
 			existingDelta := *existing.Delta
 			newDelta := *metric.Delta
@@ -48,8 +46,6 @@ func (r *MemStorage) Save(ctx context.Context, metric models.Metrics) error {
 		} else {
 			r.metrics[key] = metric
 		}
-	default:
-		return ErrInvalidMetricType
 	}
 
 	return nil
@@ -86,6 +82,72 @@ func (r *MemStorage) List(ctx context.Context) ([]models.Metrics, error) {
 	return metrics, nil
 }
 
+func (s *MemStorage) SaveBatch(ctx context.Context, metrics []models.Metrics) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	tmp := make(map[string]models.Metrics, len(s.metrics))
+	for k, v := range s.metrics {
+		tmp[k] = v
+	}
+
+	for _, m := range metrics {
+		if err := validate(m); err != nil {
+			return err
+		}
+		key := buildKey(m.ID, m.MType)
+
+		switch m.MType {
+		case models.Gauge:
+			tmp[key] = models.Metrics{
+				ID:    m.ID,
+				MType: m.MType,
+				Value: m.Value,
+			}
+		case models.Counter:
+			existing, ok := tmp[key]
+			if !ok {
+				tmp[key] = models.Metrics{
+					ID:    m.ID,
+					MType: m.MType,
+					Delta: m.Delta,
+				}
+			} else {
+				newDelta := *existing.Delta + *m.Delta
+				tmp[key] = models.Metrics{
+					ID:    m.ID,
+					MType: m.MType,
+					Delta: &newDelta,
+					Hash:  m.Hash,
+				}
+			}
+		}
+	}
+
+	s.metrics = tmp
+	return nil
+}
+
 func buildKey(id string, mType string) string {
 	return id + mType
+}
+
+func validate(m models.Metrics) error {
+	switch m.MType {
+	case models.Gauge:
+		if m.Value == nil {
+			return ErrGaugeMetricIsEmptyValue
+		}
+	case models.Counter:
+		if m.Delta == nil {
+			return ErrCounterMetricIsEmptyValue
+		}
+	default:
+		return ErrInvalidMetricType
+	}
+	return nil
 }
