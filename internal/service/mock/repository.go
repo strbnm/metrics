@@ -9,7 +9,7 @@ import (
 	reflect "reflect"
 
 	gomock "github.com/golang/mock/gomock"
-	model "github.com/strbnm/metrics/internal/model"
+	models "github.com/strbnm/metrics/internal/model"
 )
 
 // MockRepository is a mock of Repository interface.
@@ -36,10 +36,10 @@ func (m *MockRepository) EXPECT() *MockRepositoryMockRecorder {
 }
 
 // Get mocks base method.
-func (m *MockRepository) Get(ctx context.Context, id, mType string) (model.Metrics, error) {
+func (m *MockRepository) Get(ctx context.Context, id, mType string) (models.Metrics, error) {
 	m.ctrl.T.Helper()
 	ret := m.ctrl.Call(m, "Get", ctx, id, mType)
-	ret0, _ := ret[0].(model.Metrics)
+	ret0, _ := ret[0].(models.Metrics)
 	ret1, _ := ret[1].(error)
 	return ret0, ret1
 }
@@ -51,10 +51,10 @@ func (mr *MockRepositoryMockRecorder) Get(ctx, id, mType interface{}) *gomock.Ca
 }
 
 // List mocks base method.
-func (m *MockRepository) List(ctx context.Context) ([]model.Metrics, error) {
+func (m *MockRepository) List(ctx context.Context) ([]models.Metrics, error) {
 	m.ctrl.T.Helper()
 	ret := m.ctrl.Call(m, "List", ctx)
-	ret0, _ := ret[0].([]model.Metrics)
+	ret0, _ := ret[0].([]models.Metrics)
 	ret1, _ := ret[1].(error)
 	return ret0, ret1
 }
@@ -66,7 +66,7 @@ func (mr *MockRepositoryMockRecorder) List(ctx interface{}) *gomock.Call {
 }
 
 // Save mocks base method.
-func (m *MockRepository) Save(ctx context.Context, metric model.Metrics) error {
+func (m *MockRepository) Save(ctx context.Context, metric models.Metrics) error {
 	m.ctrl.T.Helper()
 	ret := m.ctrl.Call(m, "Save", ctx, metric)
 	ret0, _ := ret[0].(error)
@@ -77,4 +77,18 @@ func (m *MockRepository) Save(ctx context.Context, metric model.Metrics) error {
 func (mr *MockRepositoryMockRecorder) Save(ctx, metric interface{}) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Save", reflect.TypeOf((*MockRepository)(nil).Save), ctx, metric)
+}
+
+// SaveBatch mocks base method.
+func (m *MockRepository) SaveBatch(ctx context.Context, metrics []models.Metrics) error {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "SaveBatch", ctx, metrics)
+	ret0, _ := ret[0].(error)
+	return ret0
+}
+
+// SaveBatch indicates an expected call of SaveBatch.
+func (mr *MockRepositoryMockRecorder) SaveBatch(ctx, metrics interface{}) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "SaveBatch", reflect.TypeOf((*MockRepository)(nil).SaveBatch), ctx, metrics)
 }
