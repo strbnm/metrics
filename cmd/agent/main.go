@@ -1,7 +1,11 @@
 package main
 
 import (
+	"context"
 	"log"
+	"os"
+	"os/signal"
+	"syscall"
 
 	"github.com/strbnm/metrics/internal/agent"
 	config "github.com/strbnm/metrics/internal/config/agent"
@@ -26,7 +30,18 @@ func main() {
 	log.Printf("Starting metrics agent: poll every %v, report every %v to %s",
 		cfg.CollectorConfig.PollInterval, cfg.CollectorConfig.ReportInterval, serverURL)
 
-	collector.Start(func(metrics []models.Metrics) error {
-		return sender.Send(metrics)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	// graceful shutdown: отменяем контекст по сигналу
+	go func() {
+		stop := make(chan os.Signal, 1)
+		signal.Notify(stop, syscall.SIGINT, syscall.SIGTERM)
+		<-stop
+		cancel()
+	}()
+
+	collector.Start(ctx, func(ctx context.Context, metrics []models.Metrics) error {
+		return sender.Send(ctx, metrics)
 	})
 }
