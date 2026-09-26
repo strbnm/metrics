@@ -10,3 +10,18 @@
 - файловые системы
 - кэши (Redis, Memcached)
 - другие источники данных.
+
+
+### Запуск интеграционных тестов БД
+
+```shell
+# поднять тестовый PostgreSQL
+docker run -d --name test_pg \
+  -e POSTGRES_DB=test_metrics \
+  -e POSTGRES_PASSWORD=postgres \
+  -p 5433:5432 \
+  postgres:16
+
+# запустить контракт-тесты с тегом integration
+go test -tags=integration -v ./internal/repository/...
+```
