@@ -5,12 +5,25 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"net"
 
 	models "github.com/strbnm/metrics/internal/model"
+	"github.com/strbnm/metrics/internal/repository/pgerrors"
+	"github.com/strbnm/metrics/internal/retry"
 )
 
 type DBStorage struct {
-	db *sql.DB
+	db         *sql.DB
+	classifier *pgerrors.PostgresErrorClassifier
+}
+
+func (s *DBStorage) isRetriable(err error) bool {
+	if s.classifier.Classify(err) == pgerrors.Retriable {
+		return true
+	}
+	// сетевые ошибки — тоже retriable
+	var netErr net.Error
+	return errors.As(err, &netErr)
 }
 
 const (
@@ -39,114 +52,127 @@ FROM metrics;`
 )
 
 func (s *DBStorage) Save(ctx context.Context, metric models.Metrics) error {
-	switch metric.MType {
-	case models.Gauge:
-		if metric.Value == nil {
-			return ErrGaugeMetricIsEmptyValue
-		}
-		_, err := s.db.ExecContext(ctx, upsertGaugeQuery, metric.ID, metric.MType, *metric.Value, metric.Hash)
+	if err := validate(metric); err != nil {
 		return err
-
-	case models.Counter:
-		if metric.Delta == nil {
-			return ErrCounterMetricIsEmptyValue
-		}
-		_, err := s.db.ExecContext(ctx, upsertCounterQuery, metric.ID, metric.MType, *metric.Delta, metric.Hash)
-		return err
-
-	default:
-		return ErrInvalidMetricType
 	}
+	return retry.Do(ctx, func() error {
+		switch metric.MType {
+		case models.Gauge:
+			_, err := s.db.ExecContext(ctx, upsertGaugeQuery, metric.ID, metric.MType, *metric.Value, metric.Hash)
+			return err
+		case models.Counter:
+			_, err := s.db.ExecContext(ctx, upsertCounterQuery, metric.ID, metric.MType, *metric.Delta, metric.Hash)
+			return err
+		}
+		return nil
+	}, retry.DefaultIntervals, s.isRetriable)
 }
 
 func (s *DBStorage) Get(ctx context.Context, id string, mType string) (models.Metrics, error) {
-	var m models.Metrics
-	err := s.db.QueryRowContext(ctx, findByIDAndTypeQuery, id, mType).Scan(&m.ID, &m.MType, &m.Delta, &m.Value, &m.Hash)
-	if err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			return models.Metrics{}, fmt.Errorf("%w: %w", ErrMetricNotFound, err)
+	var result models.Metrics
+
+	err := retry.Do(ctx, func() error {
+		err := s.db.QueryRowContext(ctx, findByIDAndTypeQuery, id, mType).
+			Scan(&result.ID, &result.MType, &result.Delta, &result.Value, &result.Hash)
+		if err != nil {
+			if errors.Is(err, sql.ErrNoRows) {
+				return fmt.Errorf("%w: %w", ErrMetricNotFound, err)
+			}
+			return err
 		}
-		return models.Metrics{}, err
-	}
-	return m, err
+		return nil
+	}, retry.DefaultIntervals, s.isRetriable)
+
+	return result, err
 }
 
 func (s *DBStorage) List(ctx context.Context) ([]models.Metrics, error) {
-	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{
-		Isolation: sql.LevelRepeatableRead,
-		ReadOnly:  true,
-	})
-	if err != nil {
-		return nil, err
-	}
-	defer tx.Rollback()
-
-	rows, err := tx.QueryContext(ctx, findAllQuery)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-
 	var result []models.Metrics
-	for rows.Next() {
-		var m models.Metrics
-		if err := rows.Scan(&m.ID, &m.MType, &m.Delta, &m.Value, &m.Hash); err != nil {
-			return nil, err
+
+	err := retry.Do(ctx, func() error {
+		result = nil // сброс перед каждой попыткой
+
+		tx, err := s.db.BeginTx(ctx, &sql.TxOptions{
+			Isolation: sql.LevelRepeatableRead,
+			ReadOnly:  true,
+		})
+		if err != nil {
+			return err
 		}
-		result = append(result, m)
-	}
-	return result, rows.Err()
+		defer tx.Rollback()
+
+		rows, err := tx.QueryContext(ctx, findAllQuery)
+		if err != nil {
+			return err
+		}
+		defer rows.Close()
+
+		for rows.Next() {
+			var m models.Metrics
+			if err := rows.Scan(&m.ID, &m.MType, &m.Delta, &m.Value, &m.Hash); err != nil {
+				return err
+			}
+			result = append(result, m)
+		}
+		return rows.Err()
+	}, retry.DefaultIntervals, s.isRetriable)
+
+	return result, err
 }
 
 func (s *DBStorage) SaveBatch(ctx context.Context, metrics []models.Metrics) error {
 	if len(metrics) == 0 {
 		return nil
 	}
-
-	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{
-		Isolation: sql.LevelReadCommitted,
-	})
-	if err != nil {
-		return fmt.Errorf("begin tx: %w", err)
-	}
-	defer tx.Rollback()
-
-	stmtUpsertGauge, err := tx.PrepareContext(ctx, upsertGaugeQuery)
-	if err != nil {
-		return fmt.Errorf("prepare upsert gauge: %w", err)
-	}
-	defer stmtUpsertGauge.Close()
-
-	stmtUpsertCounter, err := tx.PrepareContext(ctx, upsertCounterQuery)
-	if err != nil {
-		return fmt.Errorf("prepare upsert counter: %w", err)
-	}
-	defer stmtUpsertCounter.Close()
-
-	for _, m := range metrics {
-		if err = validate(m); err != nil {
-			return err
+	return retry.Do(ctx, func() error {
+		tx, err := s.db.BeginTx(ctx, &sql.TxOptions{
+			Isolation: sql.LevelReadCommitted,
+		})
+		if err != nil {
+			return fmt.Errorf("begin tx: %w", err)
 		}
-		switch m.MType {
-		case models.Gauge:
-			if _, err := stmtUpsertGauge.ExecContext(ctx, m.ID, m.MType, *m.Value, m.Hash); err != nil {
-				return fmt.Errorf("upsert gauge in batch: %w", err)
+		defer tx.Rollback()
+
+		stmtUpsertGauge, err := tx.PrepareContext(ctx, upsertGaugeQuery)
+		if err != nil {
+			return fmt.Errorf("prepare upsert gauge: %w", err)
+		}
+		defer stmtUpsertGauge.Close()
+
+		stmtUpsertCounter, err := tx.PrepareContext(ctx, upsertCounterQuery)
+		if err != nil {
+			return fmt.Errorf("prepare upsert counter: %w", err)
+		}
+		defer stmtUpsertCounter.Close()
+
+		for _, m := range metrics {
+			if err = validate(m); err != nil {
+				return err
 			}
-		case models.Counter:
-			if _, err := stmtUpsertCounter.ExecContext(ctx, m.ID, m.MType, *m.Delta, m.Hash); err != nil {
-				return fmt.Errorf("upsert counter in batch: %w", err)
+			switch m.MType {
+			case models.Gauge:
+				if _, err := stmtUpsertGauge.ExecContext(ctx, m.ID, m.MType, *m.Value, m.Hash); err != nil {
+					return fmt.Errorf("upsert gauge in batch: %w", err)
+				}
+			case models.Counter:
+				if _, err := stmtUpsertCounter.ExecContext(ctx, m.ID, m.MType, *m.Delta, m.Hash); err != nil {
+					return fmt.Errorf("upsert counter in batch: %w", err)
+				}
 			}
 		}
-	}
 
-	if err := tx.Commit(); err != nil {
-		return fmt.Errorf("commit batch: %w", err)
-	}
-	return nil
+		if err := tx.Commit(); err != nil {
+			return fmt.Errorf("commit batch: %w", err)
+		}
+		return nil
+	}, retry.DefaultIntervals, s.isRetriable)
 }
 
 func NewDBStorage(db *sql.DB) *DBStorage {
-	return &DBStorage{db: db}
+	return &DBStorage{
+		db:         db,
+		classifier: pgerrors.NewPostgresErrorClassifier(),
+	}
 }
 
 func (s *DBStorage) Ping(ctx context.Context) error {
