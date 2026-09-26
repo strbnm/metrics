@@ -21,6 +21,7 @@ type MetricsService interface {
 	GetMetricValue(ctx context.Context, metricName, metricType string) (string, error)
 	UpdateMetricFromModel(ctx context.Context, m models.Metrics) error
 	GetMetric(ctx context.Context, m *models.Metrics) error
+	UpdateMetrics(ctx context.Context, ms []models.Metrics) error
 }
 
 type Pinger interface {

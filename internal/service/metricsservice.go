@@ -109,6 +109,19 @@ func (s *MetricsService) GetMetric(ctx context.Context, m *models.Metrics) error
 	return nil
 }
 
+func (s *MetricsService) UpdateMetrics(ctx context.Context, metrics []models.Metrics) error {
+	for _, m := range metrics {
+		if m.MType != models.Gauge && m.MType != models.Counter {
+			return ErrInvalidMetricType
+		}
+		if m.ID == "" {
+			return ErrEmptyMetricName
+		}
+	}
+
+	return s.repo.SaveBatch(ctx, metrics)
+}
+
 func NewMetricsService(repo Repository, logger *zap.SugaredLogger) *MetricsService {
 	return &MetricsService{
 		repo:   repo,
