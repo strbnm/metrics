@@ -82,16 +82,16 @@ func (r *MemStorage) List(ctx context.Context) ([]models.Metrics, error) {
 	return metrics, nil
 }
 
-func (s *MemStorage) SaveBatch(ctx context.Context, metrics []models.Metrics) error {
+func (r *MemStorage) SaveBatch(ctx context.Context, metrics []models.Metrics) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
 
-	s.mu.Lock()
-	defer s.mu.Unlock()
+	r.mu.Lock()
+	defer r.mu.Unlock()
 
-	tmp := make(map[string]models.Metrics, len(s.metrics))
-	for k, v := range s.metrics {
+	tmp := make(map[string]models.Metrics, len(r.metrics))
+	for k, v := range r.metrics {
 		tmp[k] = v
 	}
 
@@ -128,7 +128,7 @@ func (s *MemStorage) SaveBatch(ctx context.Context, metrics []models.Metrics) er
 		}
 	}
 
-	s.metrics = tmp
+	r.metrics = tmp
 	return nil
 }
 
