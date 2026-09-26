@@ -1,12 +1,16 @@
 package agent
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"net"
 	"net/http"
 
 	"github.com/strbnm/metrics/internal/compress"
 	models "github.com/strbnm/metrics/internal/model"
+	"github.com/strbnm/metrics/internal/retry"
 
 	"github.com/go-resty/resty/v2"
 )
@@ -25,16 +29,17 @@ func NewSender(serverURL string) (*Sender, error) {
 	}, nil
 }
 
-func (s *Sender) Send(metrics []models.Metrics) error {
+func (s *Sender) Send(ctx context.Context, metrics []models.Metrics) error {
 	if len(metrics) == 0 {
 		return nil
 	}
-	err := s.sendMetrics(&metrics)
-	if err != nil {
-		return fmt.Errorf("failed to send batch of %d metrics: %w", len(metrics), err)
-	}
-
-	return nil
+	return retry.Do(ctx, func() error {
+		return s.sendMetrics(&metrics)
+	}, retry.DefaultIntervals, func(err error) bool {
+		// ретрай только на сетевые/транспортные ошибки
+		var netErr net.Error
+		return errors.As(err, &netErr)
+	})
 }
 
 func (s *Sender) sendMetric(metric *models.Metrics) error {
