@@ -94,19 +94,25 @@ func (c *Collector) GetLastMetrics() []models.Metrics {
 func (c *Collector) Start(ctx context.Context, sendFunc func(ctx context.Context, metrics []models.Metrics) error) {
 	c.collectOnce()
 
+	pollTicker := time.NewTicker(c.pollInterval)
+	defer pollTicker.Stop()
+
 	for {
-		time.Sleep(c.pollInterval)
-		c.collectOnce()
+		select {
+		case <-ctx.Done():
+			return
+		case <-pollTicker.C:
+			c.collectOnce()
 
-		if time.Since(c.lastSendTime) >= c.reportInterval {
-			metrics := c.GetLastMetrics()
-			if err := sendFunc(ctx, metrics); err != nil {
-
-				fmt.Printf("Failed to send metrics: %v\n", err)
-			} else {
-				c.lastSentPollCount = c.pollCount
+			if time.Since(c.lastSendTime) >= c.reportInterval {
+				metrics := c.GetLastMetrics()
+				if err := sendFunc(ctx, metrics); err != nil {
+					fmt.Printf("Failed to send metrics: %v\n", err)
+				} else {
+					c.lastSentPollCount = c.pollCount
+				}
+				c.lastSendTime = time.Now()
 			}
-			c.lastSendTime = time.Now()
 		}
 	}
 }

@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	"log"
-	"os"
 	"os/signal"
 	"syscall"
 
@@ -30,16 +29,9 @@ func main() {
 	log.Printf("Starting metrics agent: poll every %v, report every %v to %s",
 		cfg.CollectorConfig.PollInterval, cfg.CollectorConfig.ReportInterval, serverURL)
 
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-
-	// graceful shutdown: отменяем контекст по сигналу
-	go func() {
-		stop := make(chan os.Signal, 1)
-		signal.Notify(stop, syscall.SIGINT, syscall.SIGTERM)
-		<-stop
-		cancel()
-	}()
+	ctx, stop := signal.NotifyContext(context.Background(),
+		syscall.SIGINT, syscall.SIGTERM)
+	defer stop()
 
 	collector.Start(ctx, func(ctx context.Context, metrics []models.Metrics) error {
 		return sender.Send(ctx, metrics)
