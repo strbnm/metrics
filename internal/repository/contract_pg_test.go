@@ -12,6 +12,7 @@ import (
 	"github.com/pressly/goose/v3"
 	"github.com/strbnm/metrics/internal/service"
 	"github.com/stretchr/testify/require"
+	"go.uber.org/zap"
 
 	"github.com/strbnm/metrics/migrations"
 )
@@ -51,6 +52,8 @@ func TestPostgres_Contract(t *testing.T) {
 
 	testRepositoryContract(ctx, t, func() service.Repository {
 		cleanupDB(t, db) // чистая БД для каждого под-теста
-		return NewDBStorage(db)
+		testLogger := zap.NewNop().Sugar()
+
+		return NewDBStorage(db, testLogger)
 	})
 }

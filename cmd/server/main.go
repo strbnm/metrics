@@ -67,7 +67,7 @@ func run(appLogger *zap.SugaredLogger) error {
 		}
 		appLogger.Info("database connection established")
 
-		dbStorage := repository.NewDBStorage(dbConn)
+		dbStorage := repository.NewDBStorage(dbConn, appLogger)
 		storage = dbStorage
 		pinger = dbStorage
 

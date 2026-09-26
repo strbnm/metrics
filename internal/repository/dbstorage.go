@@ -10,11 +10,13 @@ import (
 	models "github.com/strbnm/metrics/internal/model"
 	"github.com/strbnm/metrics/internal/repository/pgerrors"
 	"github.com/strbnm/metrics/internal/retry"
+	"go.uber.org/zap"
 )
 
 type DBStorage struct {
 	db         *sql.DB
 	classifier *pgerrors.PostgresErrorClassifier
+	logger     *zap.SugaredLogger
 }
 
 func (s *DBStorage) isRetriable(err error) bool {
@@ -55,7 +57,7 @@ func (s *DBStorage) Save(ctx context.Context, metric models.Metrics) error {
 	if err := validate(metric); err != nil {
 		return err
 	}
-	return retry.Do(ctx, func() error {
+	return retry.Do(ctx, s.logger, func() error {
 		switch metric.MType {
 		case models.Gauge:
 			_, err := s.db.ExecContext(ctx, upsertGaugeQuery, metric.ID, metric.MType, *metric.Value, metric.Hash)
@@ -71,7 +73,7 @@ func (s *DBStorage) Save(ctx context.Context, metric models.Metrics) error {
 func (s *DBStorage) Get(ctx context.Context, id string, mType string) (models.Metrics, error) {
 	var result models.Metrics
 
-	err := retry.Do(ctx, func() error {
+	err := retry.Do(ctx, s.logger, func() error {
 		err := s.db.QueryRowContext(ctx, findByIDAndTypeQuery, id, mType).
 			Scan(&result.ID, &result.MType, &result.Delta, &result.Value, &result.Hash)
 		if err != nil {
@@ -89,7 +91,7 @@ func (s *DBStorage) Get(ctx context.Context, id string, mType string) (models.Me
 func (s *DBStorage) List(ctx context.Context) ([]models.Metrics, error) {
 	var result []models.Metrics
 
-	err := retry.Do(ctx, func() error {
+	err := retry.Do(ctx, s.logger, func() error {
 		result = nil // сброс перед каждой попыткой
 
 		tx, err := s.db.BeginTx(ctx, &sql.TxOptions{
@@ -124,7 +126,7 @@ func (s *DBStorage) SaveBatch(ctx context.Context, metrics []models.Metrics) err
 	if len(metrics) == 0 {
 		return nil
 	}
-	return retry.Do(ctx, func() error {
+	return retry.Do(ctx, s.logger, func() error {
 		tx, err := s.db.BeginTx(ctx, &sql.TxOptions{
 			Isolation: sql.LevelReadCommitted,
 		})
@@ -168,10 +170,11 @@ func (s *DBStorage) SaveBatch(ctx context.Context, metrics []models.Metrics) err
 	}, retry.DefaultIntervals, s.isRetriable)
 }
 
-func NewDBStorage(db *sql.DB) *DBStorage {
+func NewDBStorage(db *sql.DB, logger *zap.SugaredLogger) *DBStorage {
 	return &DBStorage{
 		db:         db,
 		classifier: pgerrors.NewPostgresErrorClassifier(),
+		logger:     logger,
 	}
 }
 

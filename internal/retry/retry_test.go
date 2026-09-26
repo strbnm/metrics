@@ -13,7 +13,7 @@ import (
 func TestDo_SuccessOnFirstAttempt(t *testing.T) {
 	t.Parallel()
 	calls := 0
-	err := Do(context.Background(), func() error {
+	err := Do(context.Background(), nil, func() error {
 		calls++
 		return nil
 	}, DefaultIntervals, func(err error) bool { return true })
@@ -24,7 +24,7 @@ func TestDo_SuccessOnFirstAttempt(t *testing.T) {
 func TestDo_SuccessAfterRetries(t *testing.T) {
 	t.Parallel()
 	calls := 0
-	err := Do(context.Background(), func() error {
+	err := Do(context.Background(), nil, func() error {
 		calls++
 		if calls < 3 {
 			return errors.New("transient")
@@ -40,7 +40,7 @@ func TestDo_SuccessAfterRetries(t *testing.T) {
 func TestDo_NonRetriableError(t *testing.T) {
 	t.Parallel()
 	calls := 0
-	err := Do(context.Background(), func() error {
+	err := Do(context.Background(), nil, func() error {
 		calls++
 		return errors.New("permanent")
 	}, DefaultIntervals, func(err error) bool {
@@ -53,7 +53,7 @@ func TestDo_NonRetriableError(t *testing.T) {
 func TestDo_ExhaustsRetries(t *testing.T) {
 	t.Parallel()
 	calls := 0
-	err := Do(context.Background(), func() error {
+	err := Do(context.Background(), nil, func() error {
 		calls++
 		return errors.New("always fails")
 	}, DefaultIntervals, func(err error) bool { return true })
@@ -68,7 +68,7 @@ func TestDo_RespectsContext(t *testing.T) {
 	defer cancel()
 
 	calls := 0
-	err := Do(ctx, func() error {
+	err := Do(ctx, nil, func() error {
 		calls++
 		return errors.New("transient")
 	}, DefaultIntervals, func(err error) bool { return true })

@@ -2,7 +2,11 @@ package retry
 
 import (
 	"context"
+	"fmt"
+	"os"
 	"time"
+
+	"go.uber.org/zap"
 )
 
 var DefaultIntervals = []time.Duration{
@@ -15,7 +19,7 @@ var DefaultIntervals = []time.Duration{
 type IsRetriable func(err error) bool
 
 // Do выполняет fn с повторами. ctx отменяет ожидание между попытками.
-func Do(ctx context.Context, fn func() error, intervals []time.Duration, isRetriable IsRetriable) error {
+func Do(ctx context.Context, log *zap.SugaredLogger, fn func() error, intervals []time.Duration, isRetriable IsRetriable) error {
 	var lastErr error
 
 	for attempt := 0; attempt <= len(intervals); attempt++ {
@@ -27,6 +31,18 @@ func Do(ctx context.Context, fn func() error, intervals []time.Duration, isRetri
 			return lastErr
 		}
 		if attempt < len(intervals) {
+			if log != nil {
+				log.Warnw("retrying after error",
+					"attempt", attempt+1,
+					"max_retries", len(intervals),
+					"error", lastErr.Error(),
+					"wait", intervals[attempt].String(),
+				)
+			} else {
+				msg := fmt.Sprintf("retrying after error: attempt=%d/%d error=%q wait=%s",
+					attempt+1, len(intervals), lastErr.Error(), intervals[attempt].String())
+				fmt.Fprintln(os.Stderr, msg)
+			}
 			select {
 			case <-ctx.Done():
 				return ctx.Err()

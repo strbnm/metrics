@@ -33,7 +33,7 @@ func (s *Sender) Send(ctx context.Context, metrics []models.Metrics) error {
 	if len(metrics) == 0 {
 		return nil
 	}
-	return retry.Do(ctx, func() error {
+	return retry.Do(ctx, nil, func() error {
 		return s.sendMetrics(&metrics)
 	}, retry.DefaultIntervals, func(err error) bool {
 		// ретрай только на сетевые/транспортные ошибки
