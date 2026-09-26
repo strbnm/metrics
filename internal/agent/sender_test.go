@@ -239,13 +239,14 @@ func TestSender_Send(t *testing.T) {
 
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
+			ctx := t.Context()
 			server := httptest.NewServer(test.serverHandler)
 			defer server.Close()
 
 			sender, err := NewSender(server.URL)
 			assert.NoError(t, err)
 
-			sendErr := sender.Send(test.metrics)
+			sendErr := sender.Send(ctx, test.metrics)
 
 			if test.wantErr {
 				require.Error(t, sendErr)
