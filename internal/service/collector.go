@@ -1,6 +1,7 @@
 package service
 
 import (
+	"context"
 	"fmt"
 	"math/rand/v2"
 	"runtime"
@@ -90,7 +91,7 @@ func (c *Collector) GetLastMetrics() []models.Metrics {
 	return c.lastMetrics
 }
 
-func (c *Collector) Start(sendFunc func([]models.Metrics) error) {
+func (c *Collector) Start(ctx context.Context, sendFunc func(ctx context.Context, metrics []models.Metrics) error) {
 	c.collectOnce()
 
 	for {
@@ -99,7 +100,7 @@ func (c *Collector) Start(sendFunc func([]models.Metrics) error) {
 
 		if time.Since(c.lastSendTime) >= c.reportInterval {
 			metrics := c.GetLastMetrics()
-			if err := sendFunc(metrics); err != nil {
+			if err := sendFunc(ctx, metrics); err != nil {
 
 				fmt.Printf("Failed to send metrics: %v\n", err)
 			} else {
