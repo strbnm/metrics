@@ -204,4 +204,166 @@ func testRepositoryContract(ctx context.Context, t *testing.T, newRepo func() se
 		require.Error(t, err)
 		assert.ErrorIs(t, err, context.Canceled)
 	})
+
+	t.Run("save batch with mixed metrics", func(t *testing.T) {
+		repo := newRepo()
+
+		batch := []models.Metrics{
+			{
+				ID:    "Alloc",
+				MType: models.Gauge,
+				Value: func(v float64) *float64 { return &v }(1.5),
+			},
+			{
+				ID:    "PollCount",
+				MType: models.Counter,
+				Delta: func(v int64) *int64 { return &v }(10),
+			},
+			{
+				ID:    "HeapInuse",
+				MType: models.Gauge,
+				Value: func(v float64) *float64 { return &v }(42.0),
+			},
+		}
+
+		require.NoError(t, repo.SaveBatch(ctx, batch))
+
+		// проверяем, что все три метрики сохранились
+		got, err := repo.List(ctx)
+		require.NoError(t, err)
+		assert.Len(t, got, 3)
+	})
+
+	t.Run("save empty batch does nothing", func(t *testing.T) {
+		repo := newRepo()
+
+		err := repo.SaveBatch(ctx, []models.Metrics{})
+		require.NoError(t, err)
+
+		metrics, err := repo.List(ctx)
+		require.NoError(t, err)
+		assert.Empty(t, metrics)
+	})
+
+	t.Run("save batch with counter accumulates delta", func(t *testing.T) {
+		repo := newRepo()
+
+		// сначала сохраняем начальное значение
+		require.NoError(t, repo.Save(ctx, models.Metrics{
+			ID:    "PollCount",
+			MType: models.Counter,
+			Delta: func(v int64) *int64 { return &v }(50),
+		}))
+
+		// батчем добавляем ещё
+		batch := []models.Metrics{
+			{
+				ID:    "PollCount",
+				MType: models.Counter,
+				Delta: func(v int64) *int64 { return &v }(30),
+			},
+			{
+				ID:    "PollCount",
+				MType: models.Counter,
+				Delta: func(v int64) *int64 { return &v }(20),
+			},
+		}
+		require.NoError(t, repo.SaveBatch(ctx, batch))
+
+		got, err := repo.Get(ctx, "PollCount", models.Counter)
+		require.NoError(t, err)
+		assert.Equal(t, int64(100), *got.Delta)
+	})
+
+	t.Run("save batch with gauge overwrites value", func(t *testing.T) {
+		repo := newRepo()
+
+		require.NoError(t, repo.Save(ctx, models.Metrics{
+			ID:    "Alloc",
+			MType: models.Gauge,
+			Value: func(v float64) *float64 { return &v }(10.0),
+		}))
+
+		batch := []models.Metrics{
+			{
+				ID:    "Alloc",
+				MType: models.Gauge,
+				Value: func(v float64) *float64 { return &v }(99.9),
+			},
+		}
+		require.NoError(t, repo.SaveBatch(ctx, batch))
+
+		got, err := repo.Get(ctx, "Alloc", models.Gauge)
+		require.NoError(t, err)
+		assert.Equal(t, 99.9, *got.Value)
+	})
+
+	t.Run("save batch with invalid metric rolls back", func(t *testing.T) {
+		repo := newRepo()
+
+		batch := []models.Metrics{
+			{
+				ID:    "ValidGauge",
+				MType: models.Gauge,
+				Value: func(v float64) *float64 { return &v }(1.0),
+			},
+			{
+				ID:    "InvalidGauge",
+				MType: models.Gauge,
+				Value: nil,
+			},
+		}
+
+		err := repo.SaveBatch(ctx, batch)
+		require.Error(t, err)
+		assert.ErrorIs(t, err, ErrGaugeMetricIsEmptyValue)
+
+		// валидная метрика не должна сохраниться — транзакция откатилась
+		metrics, listErr := repo.List(ctx)
+		require.NoError(t, listErr)
+		assert.Empty(t, metrics)
+	})
+
+	t.Run("save batch with unknown metric type rolls back", func(t *testing.T) {
+		repo := newRepo()
+
+		batch := []models.Metrics{
+			{
+				ID:    "Alloc",
+				MType: models.Gauge,
+				Value: func(v float64) *float64 { return &v }(1.0),
+			},
+			{
+				ID:    "Unknown",
+				MType: "unknown_type",
+			},
+		}
+
+		err := repo.SaveBatch(ctx, batch)
+		require.Error(t, err)
+		assert.ErrorIs(t, err, ErrInvalidMetricType)
+
+		metrics, listErr := repo.List(ctx)
+		require.NoError(t, listErr)
+		assert.Empty(t, metrics)
+	})
+
+	t.Run("save batch with canceled context returns error", func(t *testing.T) {
+		repo := newRepo()
+
+		childCtx, cancel := context.WithCancel(ctx)
+		cancel()
+
+		batch := []models.Metrics{
+			{
+				ID:    "Alloc",
+				MType: models.Gauge,
+				Value: func(v float64) *float64 { return &v }(1.0),
+			},
+		}
+
+		err := repo.SaveBatch(childCtx, batch)
+		require.Error(t, err)
+		assert.ErrorIs(t, err, context.Canceled)
+	})
 }
