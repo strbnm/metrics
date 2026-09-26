@@ -108,3 +108,17 @@ func (r *FileStorage) Flush(ctx context.Context) error {
 
 	return nil
 }
+
+func (r *FileStorage) SaveBatch(ctx context.Context, metrics []models.Metrics) error {
+	err := r.MemStorage.SaveBatch(ctx, metrics)
+	if err != nil {
+		return err
+	}
+	if r.isSyncFlush {
+		err = r.Flush(ctx)
+		if err != nil {
+			return err
+		}
+	}
+	return nil
+}
