@@ -15,7 +15,7 @@ func TestNewServerConfig(t *testing.T) {
 	cfg := NewServerConfig()
 
 	assert.Equal(t, "localhost:8080", cfg.RunAddr, "RunAddr должен быть 'localhost:8080' по умолчанию")
-	assert.Equal(t, 300 * time.Second, cfg.Store.StoreInterval, "StoreInterval должен быть 300 сек. по умолчанию")
+	assert.Equal(t, 300*time.Second, cfg.Store.StoreInterval, "StoreInterval должен быть 300 сек. по умолчанию")
 	assert.Equal(t, "metrics.json", cfg.Store.FileStoragePath, "FileStoragePath должен быть 'metrics.json' по умолчанию")
 	assert.Equal(t, true, cfg.Store.Restore, "Restore должен быть 'true' по умолчанию")
 }
@@ -282,8 +282,8 @@ func TestParseFlags(t *testing.T) {
 			},
 		},
 		{
-			name:    "Env overrides via flags DatabaseDSN",
-			args:    []string{"cmd", "-d=host=localhost user=test_user dbname=test_db password=xxx sslmode=disable"},
+			name: "Env overrides via flags DatabaseDSN",
+			args: []string{"cmd", "-d=host=localhost user=test_user dbname=test_db password=xxx sslmode=disable"},
 			env: map[string]string{
 				"DATABASE_DSN": "host=test_env_host user=env_user dbname=env_db password=xxx sslmode=disable",
 			},

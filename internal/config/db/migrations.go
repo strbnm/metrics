@@ -8,12 +8,12 @@ import (
 )
 
 func RunMigrations(db *sql.DB) error {
-    goose.SetBaseFS(migrations.Files)
-    if err := goose.SetDialect("postgres"); err != nil {
-        return err
-    }
-    if err := goose.Up(db, "."); err != nil {
-        return err
-    }
-    return nil
+	goose.SetBaseFS(migrations.Files)
+	if err := goose.SetDialect("postgres"); err != nil {
+		return err
+	}
+	if err := goose.Up(db, "."); err != nil {
+		return err
+	}
+	return nil
 }
