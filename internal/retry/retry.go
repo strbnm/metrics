@@ -9,17 +9,21 @@ import (
 	"go.uber.org/zap"
 )
 
-var DefaultIntervals = []time.Duration{
-	1 * time.Second,
-	3 * time.Second,
-	5 * time.Second,
-}
-
 // IsRetriable определяет, стоит ли повторять попытку.
 type IsRetriable func(err error) bool
 
 // Do выполняет fn с повторами. ctx отменяет ожидание между попытками.
 func Do(ctx context.Context, log *zap.SugaredLogger, fn func() error, intervals []time.Duration, isRetriable IsRetriable) error {
+	var defaultIntervals = []time.Duration{
+		1 * time.Second,
+		3 * time.Second,
+		5 * time.Second,
+	}
+
+	if intervals == nil {
+		intervals = defaultIntervals
+	}
+
 	var lastErr error
 
 	for attempt := 0; attempt <= len(intervals); attempt++ {

@@ -67,7 +67,7 @@ func (s *DBStorage) Save(ctx context.Context, metric models.Metrics) error {
 			return err
 		}
 		return nil
-	}, retry.DefaultIntervals, s.isRetriable)
+	}, nil, s.isRetriable)
 }
 
 func (s *DBStorage) Get(ctx context.Context, id string, mType string) (models.Metrics, error) {
@@ -83,7 +83,7 @@ func (s *DBStorage) Get(ctx context.Context, id string, mType string) (models.Me
 			return err
 		}
 		return nil
-	}, retry.DefaultIntervals, s.isRetriable)
+	}, nil, s.isRetriable)
 
 	return result, err
 }
@@ -117,7 +117,7 @@ func (s *DBStorage) List(ctx context.Context) ([]models.Metrics, error) {
 			result = append(result, m)
 		}
 		return rows.Err()
-	}, retry.DefaultIntervals, s.isRetriable)
+	}, nil, s.isRetriable)
 
 	return result, err
 }
@@ -167,7 +167,7 @@ func (s *DBStorage) SaveBatch(ctx context.Context, metrics []models.Metrics) err
 			return fmt.Errorf("commit batch: %w", err)
 		}
 		return nil
-	}, retry.DefaultIntervals, s.isRetriable)
+	}, nil, s.isRetriable)
 }
 
 func NewDBStorage(db *sql.DB, logger *zap.SugaredLogger) *DBStorage {

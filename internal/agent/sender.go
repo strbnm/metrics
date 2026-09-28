@@ -35,7 +35,7 @@ func (s *Sender) Send(ctx context.Context, metrics []models.Metrics) error {
 	}
 	return retry.Do(ctx, nil, func() error {
 		return s.sendMetrics(&metrics)
-	}, retry.DefaultIntervals, func(err error) bool {
+	}, nil, func(err error) bool {
 		// ретрай только на сетевые/транспортные ошибки
 		var netErr net.Error
 		return errors.As(err, &netErr)
