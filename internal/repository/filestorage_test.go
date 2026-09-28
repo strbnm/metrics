@@ -12,7 +12,8 @@ import (
 
 func TestNewFileStorage(t *testing.T) {
 	t.Run("positive - create new memory storage", func(t *testing.T) {
-		storage := NewMemStorage()
+		testLogger := zap.NewNop().Sugar()
+		storage := NewFileStorage("test.json", true, true, testLogger)
 
 		require.NotNil(t, storage)
 		require.NotNil(t, storage.metrics)
