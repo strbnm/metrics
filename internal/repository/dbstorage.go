@@ -5,7 +5,6 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
-	"net"
 
 	models "github.com/strbnm/metrics/internal/model"
 	"github.com/strbnm/metrics/internal/repository/postgres"
@@ -20,12 +19,7 @@ type DBStorage struct {
 }
 
 func (s *DBStorage) isRetriable(err error) bool {
-	if s.classifier.Classify(err) == postgres.Retriable {
-		return true
-	}
-	// сетевые ошибки — тоже retriable
-	var netErr net.Error
-	return errors.As(err, &netErr)
+	return s.classifier.Classify(err) == postgres.Retriable || retry.IsNetError(err)
 }
 
 const (

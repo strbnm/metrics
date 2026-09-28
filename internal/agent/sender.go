@@ -3,10 +3,9 @@ package agent
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
-	"net"
 	"net/http"
+	"time"
 
 	"github.com/strbnm/metrics/internal/compress"
 	models "github.com/strbnm/metrics/internal/model"
@@ -14,6 +13,9 @@ import (
 
 	"github.com/go-resty/resty/v2"
 )
+
+// senderTimeout ограничивает время одного HTTP-запроса.
+const senderTimeout = 10 * time.Second
 
 type Sender struct {
 	client *resty.Client
@@ -24,8 +26,13 @@ func NewSender(serverURL string) (*Sender, error) {
 		return nil, fmt.Errorf("serverURL cannot be empty")
 	}
 
+	client := resty.New().
+		SetBaseURL(serverURL).
+		SetTimeout(senderTimeout).
+		SetRetryCount(0) // повторы выполняет retry.Do
+
 	return &Sender{
-		client: resty.New().SetBaseURL(serverURL),
+		client: client,
 	}, nil
 }
 
@@ -34,31 +41,30 @@ func (s *Sender) Send(ctx context.Context, metrics []models.Metrics) error {
 		return nil
 	}
 	return retry.Do(ctx, nil, func() error {
-		return s.sendMetrics(&metrics)
-	}, nil, func(err error) bool {
-		// ретрай только на сетевые/транспортные ошибки
-		var netErr net.Error
-		return errors.As(err, &netErr)
-	})
+		return s.post(ctx, "/updates", metrics)
+	}, nil, retry.IsNetError)
 }
 
-func (s *Sender) sendMetrics(metrics *[]models.Metrics) error {
-	data, err := json.Marshal(metrics)
+// post сериализует payload в JSON, сжимает gzip, отправляет на path
+// и проверяет, что сервер ответил 200 OK.
+func (s *Sender) post(ctx context.Context, path string, payload any) error {
+	data, err := json.Marshal(payload)
 	if err != nil {
-		return fmt.Errorf("failed to marshal metrics: %w", err)
+		return fmt.Errorf("failed to marshal payload: %w", err)
 	}
 
 	compressed, err := compress.Compress(data)
 	if err != nil {
-		return fmt.Errorf("failed to compress metrics: %w", err)
+		return fmt.Errorf("failed to compress payload: %w", err)
 	}
 
 	resp, err := s.client.R().
+		SetContext(ctx).
 		SetBody(compressed).
 		SetHeader("Content-Type", "application/json; charset=utf-8").
 		SetHeader("Accept-Encoding", "gzip").
 		SetHeader("Content-Encoding", "gzip").
-		Post("/updates")
+		Post(path)
 	if err != nil {
 		return err
 	}

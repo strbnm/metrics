@@ -2,7 +2,9 @@ package retry
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"net"
 	"os"
 	"time"
 
@@ -11,6 +13,13 @@ import (
 
 // IsRetriable определяет, стоит ли повторять попытку.
 type IsRetriable func(err error) bool
+
+// IsNetError сообщает, что ошибка сетевая (транспортная).
+// Такие ошибки считаются временными и допускают повтор попытки.
+func IsNetError(err error) bool {
+	var netErr net.Error
+	return errors.As(err, &netErr)
+}
 
 // Do выполняет fn с повторами. ctx отменяет ожидание между попытками.
 func Do(ctx context.Context, log *zap.SugaredLogger, fn func() error, intervals []time.Duration, isRetriable IsRetriable) error {
