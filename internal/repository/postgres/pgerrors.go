@@ -61,31 +61,9 @@ func ClassifyPgError(pgErr *pgconn.PgError) PGErrorClassification {
 		return Retriable
 	}
 
-	// Можно добавить более конкретные проверки с использованием констант pgerrcode
-	switch pgErr.Code {
+	// Следующие классы ошибок и ошибки, не подпадающие под определенные выше, считаем неповторяемыми:
 	// Класс 22 - Ошибки данных
-	case pgerrcode.DataException,
-		pgerrcode.NullValueNotAllowedDataException:
-		return NonRetriable
-
 	// Класс 23 - Нарушение ограничений целостности
-	case pgerrcode.IntegrityConstraintViolation,
-		pgerrcode.RestrictViolation,
-		pgerrcode.NotNullViolation,
-		pgerrcode.ForeignKeyViolation,
-		pgerrcode.UniqueViolation,
-		pgerrcode.CheckViolation:
-		return NonRetriable
-
 	// Класс 42 - Синтаксические ошибки
-	case pgerrcode.SyntaxErrorOrAccessRuleViolation,
-		pgerrcode.SyntaxError,
-		pgerrcode.UndefinedColumn,
-		pgerrcode.UndefinedTable,
-		pgerrcode.UndefinedFunction:
-		return NonRetriable
-	}
-
-	// По умолчанию считаем ошибку неповторяемой
 	return NonRetriable
 }
