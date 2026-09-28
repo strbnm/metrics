@@ -8,19 +8,19 @@ import (
 	"net"
 
 	models "github.com/strbnm/metrics/internal/model"
-	"github.com/strbnm/metrics/internal/repository/pgerrors"
+	"github.com/strbnm/metrics/internal/repository/postgres"
 	"github.com/strbnm/metrics/internal/retry"
 	"go.uber.org/zap"
 )
 
 type DBStorage struct {
 	db         *sql.DB
-	classifier *pgerrors.PostgresErrorClassifier
+	classifier *postgres.PostgresErrorClassifier
 	logger     *zap.SugaredLogger
 }
 
 func (s *DBStorage) isRetriable(err error) bool {
-	if s.classifier.Classify(err) == pgerrors.Retriable {
+	if s.classifier.Classify(err) == postgres.Retriable {
 		return true
 	}
 	// сетевые ошибки — тоже retriable
@@ -173,7 +173,7 @@ func (s *DBStorage) SaveBatch(ctx context.Context, metrics []models.Metrics) err
 func NewDBStorage(db *sql.DB, logger *zap.SugaredLogger) *DBStorage {
 	return &DBStorage{
 		db:         db,
-		classifier: pgerrors.NewPostgresErrorClassifier(),
+		classifier: postgres.NewPostgresErrorClassifier(),
 		logger:     logger,
 	}
 }

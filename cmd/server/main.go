@@ -17,6 +17,7 @@ import (
 	"github.com/strbnm/metrics/internal/logger"
 	"github.com/strbnm/metrics/internal/middleware"
 	"github.com/strbnm/metrics/internal/repository"
+	"github.com/strbnm/metrics/internal/repository/postgres"
 	"github.com/strbnm/metrics/internal/service"
 	"go.uber.org/zap"
 
@@ -56,13 +57,13 @@ func run(appLogger *zap.SugaredLogger) error {
 	case cfg.DatabaseConfig.DatabaseDSN != "":
 		// приоритет 1 — база данных
 		dbCfg := db.DefaultConfig(cfg.DatabaseConfig.DatabaseDSN)
-		dbConn, err := db.NewPostgresConnection(dbCfg)
+		dbConn, err := postgres.NewPostgresConnection(dbCfg)
 		if err != nil {
 			return fmt.Errorf("main: db connection failed: %w", err)
 		}
 		defer dbConn.Close()
 
-		if err := db.RunMigrations(dbConn); err != nil {
+		if err := postgres.RunMigrations(dbConn); err != nil {
 			return fmt.Errorf("main: migrations failed: %w", err)
 		}
 		appLogger.Info("database connection established")
