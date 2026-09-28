@@ -8,6 +8,7 @@ require (
 	github.com/golang/mock v1.6.0
 	github.com/jackc/pgerrcode v0.0.0-20250907135507-afb5586c32a6
 	github.com/stretchr/testify v1.12.1
+	go.uber.org/mock v0.6.0
 	go.uber.org/zap v1.28.0
 )
 

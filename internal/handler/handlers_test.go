@@ -11,12 +11,12 @@ import (
 	"testing"
 
 	"github.com/go-chi/chi/v5"
-	"github.com/golang/mock/gomock"
 	models "github.com/strbnm/metrics/internal/model"
 	"github.com/strbnm/metrics/internal/service"
 	"github.com/strbnm/metrics/internal/service/mock"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.uber.org/mock/gomock"
 	"go.uber.org/zap"
 )
 
