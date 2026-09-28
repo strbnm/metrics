@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"log"
 	"net/http"
-	"os"
 	"os/signal"
 	"syscall"
 	"time"
@@ -26,93 +25,48 @@ import (
 	middlewares "github.com/go-chi/chi/v5/middleware"
 )
 
-func main() {
-	appLogger, cleanup, err := logger.SetupLogger("info")
-	if err != nil {
-		log.Fatalf("logger initialization failed %v", err)
-	}
-	defer cleanup()
+const (
+	shutdownTimeout   = 5 * time.Second
+	flushTimeout      = 5 * time.Second
+	readHeaderTimeout = 5 * time.Second
+)
 
-	if err := run(appLogger); err != nil {
-		appLogger.Errorf("server error %v", err)
-		os.Exit(1)
+func main() {
+	if err := run(); err != nil {
+		log.Fatalf("server error: %v", err)
 	}
 }
 
-func run(appLogger *zap.SugaredLogger) error {
+func run() error {
 	cfg, err := config.ParseFlags()
 	if err != nil {
 		return fmt.Errorf("main: configuration parsing failed %w", err)
 	}
 
+	appLogger, cleanup, err := logger.SetupLogger("info")
+	if err != nil {
+		return fmt.Errorf("main: logger initialization failed %w", err)
+	}
+	defer cleanup()
+
 	ctx, stop := signal.NotifyContext(context.Background(),
 		syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
-	var storage service.Repository
-	var pinger handler.Pinger
-	var fileStorage *repository.FileStorage
-
-	switch {
-	case cfg.DatabaseConfig.DatabaseDSN != "":
-		// приоритет 1 — база данных
-		dbCfg := db.DefaultConfig(cfg.DatabaseConfig.DatabaseDSN)
-		dbConn, err := postgres.NewPostgresConnection(dbCfg)
-		if err != nil {
-			return fmt.Errorf("main: db connection failed: %w", err)
-		}
-		defer dbConn.Close()
-
-		if err := postgres.RunMigrations(dbConn); err != nil {
-			return fmt.Errorf("main: migrations failed: %w", err)
-		}
-		appLogger.Info("database connection established")
-
-		dbStorage := repository.NewDBStorage(dbConn, appLogger)
-		storage = dbStorage
-		pinger = dbStorage
-
-	case cfg.Store.FileStoragePath != "":
-		// приоритет 2 — файловое хранилище
-		isSyncFlush := cfg.Store.StoreInterval == 0
-		fileStorage = repository.NewFileStorage(
-			cfg.Store.FileStoragePath, isSyncFlush, cfg.Store.Restore, appLogger,
-		)
-		storage = fileStorage
-
-		if !isSyncFlush {
-			go runPeriodicSave(ctx, fileStorage, cfg.Store.StoreInterval, appLogger)
-		}
-		appLogger.Info("file storage initialized", "path", cfg.Store.FileStoragePath)
-
-	default:
-		// приоритет 3 — in-memory
-		storage = repository.NewMemStorage()
-		appLogger.Info("in-memory storage initialized")
+	storage, pinger, fileStorage, cleanupStorage, err := newStorage(ctx, cfg, appLogger)
+	if err != nil {
+		return fmt.Errorf("main: %w", err)
 	}
+	defer cleanupStorage()
 
 	metricsService := service.NewMetricsService(storage, appLogger)
 
 	h := handler.NewHandler(metricsService, pinger, appLogger)
 
-	r := chi.NewRouter()
-	r.Use(middlewares.StripSlashes)
-	r.Use(middleware.GzipMiddleware)
-	r.Use(middleware.WithLogging(appLogger))
-
-	r.Route("/", func(r chi.Router) {
-		r.Get("/", h.ListAllMetricsHandler)
-		r.Get("/value/{metricType}/{metricName}", h.ValueHandler)
-		r.Get("/ping", h.Ping)
-		r.Post("/update/{metricType}/{metricName}/{metricValue}", h.UpdateHandler)
-		r.Post("/update", h.UpdateJSONHandler)
-		r.Post("/updates", h.UpdateBatchJSONHandler)
-		r.Post("/value", h.ValueJSONHandler)
-	})
-
 	srv := &http.Server{
-		Addr:    cfg.RunAddr,
-		Handler: r,
+		Addr:              cfg.RunAddr,
+		Handler:           newRouter(h, appLogger),
+		ReadHeaderTimeout: readHeaderTimeout,
 	}
 
 	appLogger.Infof("Server is starting on %s", cfg.RunAddr)
@@ -134,24 +88,99 @@ func run(appLogger *zap.SugaredLogger) error {
 	}
 
 	// Останавливаем сервер с таймаутом
-	shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), shutdownTimeout)
 	defer cancel()
 	if err := srv.Shutdown(shutdownCtx); err != nil {
 		appLogger.Errorf("server shutdown error: %v", err)
 	}
 
 	// Финальное сохранение метрик
-	if fileStorage != nil {
-		flushCtx, flushCancel := context.WithTimeout(context.Background(), 5*time.Second)
-		defer flushCancel()
-		if errFlush := fileStorage.Flush(flushCtx); errFlush != nil {
-			appLogger.Errorf("final flush failed: %v", errFlush)
-		} else {
-			appLogger.Info("final flush completed")
-		}
-	}
+	flushFileStorage(fileStorage, appLogger)
 
 	return nil
+}
+
+// newStorage создаёт хранилище по приоритету: БД → файл → память.
+// Возвращает также функцию освобождения ресурсов и файловое хранилище,
+// если оно было создано (для финального сохранения).
+func newStorage(
+	ctx context.Context,
+	cfg *config.Config,
+	appLogger *zap.SugaredLogger,
+) (storage service.Repository, pinger handler.Pinger, fileStorage *repository.FileStorage, cleanup func(), err error) {
+	cleanup = func() {}
+
+	switch {
+	case cfg.DatabaseConfig.DatabaseDSN != "":
+		// приоритет 1 — база данных
+		dbCfg := db.DefaultConfig(cfg.DatabaseConfig.DatabaseDSN)
+		dbConn, err := postgres.NewPostgresConnection(dbCfg)
+		if err != nil {
+			return nil, nil, nil, cleanup, fmt.Errorf("db connection failed: %w", err)
+		}
+
+		if err := postgres.RunMigrations(dbConn); err != nil {
+			dbConn.Close()
+			return nil, nil, nil, cleanup, fmt.Errorf("migrations failed: %w", err)
+		}
+		appLogger.Info("database connection established")
+
+		dbStorage := repository.NewDBStorage(dbConn, appLogger)
+		return dbStorage, dbStorage, nil, func() { dbConn.Close() }, nil
+
+	case cfg.Store.FileStoragePath != "":
+		// приоритет 2 — файловое хранилище
+		isSyncFlush := cfg.Store.StoreInterval == 0
+		fileStorage = repository.NewFileStorage(
+			cfg.Store.FileStoragePath, isSyncFlush, cfg.Store.Restore, appLogger,
+		)
+
+		if !isSyncFlush {
+			go runPeriodicSave(ctx, fileStorage, cfg.Store.StoreInterval, appLogger)
+		}
+		appLogger.Info("file storage initialized", "path", cfg.Store.FileStoragePath)
+		return fileStorage, nil, fileStorage, cleanup, nil
+
+	default:
+		// приоритет 3 — in-memory
+		storage = repository.NewMemStorage()
+		appLogger.Info("in-memory storage initialized")
+		return storage, nil, nil, cleanup, nil
+	}
+}
+
+// newRouter собирает цепочку middleware и маршруты API.
+func newRouter(h *handler.Handler, appLogger *zap.SugaredLogger) *chi.Mux {
+	r := chi.NewRouter()
+	r.Use(middlewares.StripSlashes)
+	r.Use(middleware.GzipMiddleware)
+	r.Use(middleware.WithLogging(appLogger))
+
+	r.Route("/", func(r chi.Router) {
+		r.Get("/", h.ListAllMetricsHandler)
+		r.Get("/value/{metricType}/{metricName}", h.ValueHandler)
+		r.Get("/ping", h.Ping)
+		r.Post("/update/{metricType}/{metricName}/{metricValue}", h.UpdateHandler)
+		r.Post("/update", h.UpdateJSONHandler)
+		r.Post("/updates", h.UpdateBatchJSONHandler)
+		r.Post("/value", h.ValueJSONHandler)
+	})
+
+	return r
+}
+
+// flushFileStorage выполняет финальное сохранение метрик в файл, если оно настроено.
+func flushFileStorage(fileStorage *repository.FileStorage, appLogger *zap.SugaredLogger) {
+	if fileStorage == nil {
+		return
+	}
+	flushCtx, flushCancel := context.WithTimeout(context.Background(), flushTimeout)
+	defer flushCancel()
+	if errFlush := fileStorage.Flush(flushCtx); errFlush != nil {
+		appLogger.Errorf("final flush failed: %v", errFlush)
+	} else {
+		appLogger.Info("final flush completed")
+	}
 }
 
 func runPeriodicSave(ctx context.Context, r *repository.FileStorage, interval time.Duration, appLogger *zap.SugaredLogger) {
