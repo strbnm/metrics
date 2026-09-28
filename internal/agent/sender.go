@@ -42,34 +42,6 @@ func (s *Sender) Send(ctx context.Context, metrics []models.Metrics) error {
 	})
 }
 
-func (s *Sender) sendMetric(metric *models.Metrics) error {
-	data, err := json.Marshal(metric)
-	if err != nil {
-		return fmt.Errorf("failed to marshal metric: %w", err)
-	}
-
-	compressed, err := compress.Compress(data)
-	if err != nil {
-		return fmt.Errorf("failed to compress metric: %w", err)
-	}
-
-	resp, err := s.client.R().
-		SetBody(compressed).
-		SetHeader("Content-Type", "application/json; charset=utf-8").
-		SetHeader("Accept-Encoding", "gzip").
-		SetHeader("Content-Encoding", "gzip").
-		Post("/update")
-	if err != nil {
-		return err
-	}
-
-	if resp.StatusCode() != http.StatusOK {
-		return fmt.Errorf("server returned status: %d", resp.StatusCode())
-	}
-
-	return nil
-}
-
 func (s *Sender) sendMetrics(metrics *[]models.Metrics) error {
 	data, err := json.Marshal(metrics)
 	if err != nil {
