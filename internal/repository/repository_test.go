@@ -19,6 +19,7 @@ func testRepositoryContract(ctx context.Context, t *testing.T, newRepo func() se
 			ID:    "Alloc",
 			MType: models.Gauge,
 			Value: func(v float64) *float64 { return &v }(1.0),
+			Hash:  "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
 		}
 
 		require.NoError(t, repo.Save(ctx, metric))
@@ -35,6 +36,7 @@ func testRepositoryContract(ctx context.Context, t *testing.T, newRepo func() se
 			ID:    "PollCount",
 			MType: models.Counter,
 			Delta: func(v int64) *int64 { return &v }(100),
+			Hash:  "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
 		}
 
 		require.NoError(t, repo.Save(ctx, metric))
@@ -67,11 +69,13 @@ func testRepositoryContract(ctx context.Context, t *testing.T, newRepo func() se
 			ID:    "Alloc",
 			MType: models.Gauge,
 			Value: func(v float64) *float64 { return &v }(2.5),
+			Hash:  "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
 		}
 		counterMetric := models.Metrics{
 			ID:    "Requests",
 			MType: models.Counter,
 			Delta: func(v int64) *int64 { return &v }(42),
+			Hash:  "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
 		}
 
 		require.NoError(t, repo.Save(ctx, gaugeMetric))
@@ -102,6 +106,7 @@ func testRepositoryContract(ctx context.Context, t *testing.T, newRepo func() se
 			ID:    "InvalidGauge",
 			MType: models.Gauge,
 			Value: nil,
+			Hash:  "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
 		}
 
 		err := repo.Save(ctx, metric)
@@ -116,6 +121,7 @@ func testRepositoryContract(ctx context.Context, t *testing.T, newRepo func() se
 			ID:    "InvalidCounter",
 			MType: models.Counter,
 			Delta: nil,
+			Hash:  "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
 		}
 
 		err := repo.Save(ctx, metric)
@@ -130,12 +136,14 @@ func testRepositoryContract(ctx context.Context, t *testing.T, newRepo func() se
 			ID:    "Alloc",
 			MType: models.Gauge,
 			Value: func(v float64) *float64 { return &v }(2.5),
+			Hash:  "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
 		}
 
 		newMetric := models.Metrics{
 			ID:    "Alloc",
 			MType: models.Gauge,
 			Value: func(v float64) *float64 { return &v }(25.0),
+			Hash:  "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
 		}
 
 		err := repo.Save(ctx, oldMetric)
@@ -156,12 +164,14 @@ func testRepositoryContract(ctx context.Context, t *testing.T, newRepo func() se
 			ID:    "PullCount",
 			MType: models.Counter,
 			Delta: func(v int64) *int64 { return &v }(50),
+			Hash:  "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
 		}
 
 		newMetric := models.Metrics{
 			ID:    "PullCount",
 			MType: models.Counter,
 			Delta: func(v int64) *int64 { return &v }(100),
+			Hash:  "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
 		}
 
 		err := repo.Save(ctx, oldMetric)
@@ -181,6 +191,7 @@ func testRepositoryContract(ctx context.Context, t *testing.T, newRepo func() se
 		metric := models.Metrics{
 			ID:    "Unknown",
 			MType: "unknown_type",
+			Hash:  "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
 		}
 
 		err := repo.Save(ctx, metric)
@@ -198,6 +209,7 @@ func testRepositoryContract(ctx context.Context, t *testing.T, newRepo func() se
 			ID:    "Alloc",
 			MType: models.Gauge,
 			Value: func(v float64) *float64 { return &v }(1.0),
+			Hash:  "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
 		}
 
 		err := repo.Save(childCtx, metric)
@@ -213,16 +225,19 @@ func testRepositoryContract(ctx context.Context, t *testing.T, newRepo func() se
 				ID:    "Alloc",
 				MType: models.Gauge,
 				Value: func(v float64) *float64 { return &v }(1.5),
+				Hash:  "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
 			},
 			{
 				ID:    "PollCount",
 				MType: models.Counter,
 				Delta: func(v int64) *int64 { return &v }(10),
+				Hash:  "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
 			},
 			{
 				ID:    "HeapInuse",
 				MType: models.Gauge,
 				Value: func(v float64) *float64 { return &v }(42.0),
+				Hash:  "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
 			},
 		}
 
@@ -253,6 +268,7 @@ func testRepositoryContract(ctx context.Context, t *testing.T, newRepo func() se
 			ID:    "PollCount",
 			MType: models.Counter,
 			Delta: func(v int64) *int64 { return &v }(50),
+			Hash:  "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
 		}))
 
 		// батчем добавляем ещё
@@ -261,11 +277,13 @@ func testRepositoryContract(ctx context.Context, t *testing.T, newRepo func() se
 				ID:    "PollCount",
 				MType: models.Counter,
 				Delta: func(v int64) *int64 { return &v }(30),
+				Hash:  "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
 			},
 			{
 				ID:    "PollCount",
 				MType: models.Counter,
 				Delta: func(v int64) *int64 { return &v }(20),
+				Hash:  "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
 			},
 		}
 		require.NoError(t, repo.SaveBatch(ctx, batch))
@@ -282,6 +300,7 @@ func testRepositoryContract(ctx context.Context, t *testing.T, newRepo func() se
 			ID:    "Alloc",
 			MType: models.Gauge,
 			Value: func(v float64) *float64 { return &v }(10.0),
+			Hash:  "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
 		}))
 
 		batch := []models.Metrics{
@@ -289,6 +308,7 @@ func testRepositoryContract(ctx context.Context, t *testing.T, newRepo func() se
 				ID:    "Alloc",
 				MType: models.Gauge,
 				Value: func(v float64) *float64 { return &v }(99.9),
+				Hash:  "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
 			},
 		}
 		require.NoError(t, repo.SaveBatch(ctx, batch))
@@ -306,11 +326,13 @@ func testRepositoryContract(ctx context.Context, t *testing.T, newRepo func() se
 				ID:    "ValidGauge",
 				MType: models.Gauge,
 				Value: func(v float64) *float64 { return &v }(1.0),
+				Hash:  "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
 			},
 			{
 				ID:    "InvalidGauge",
 				MType: models.Gauge,
 				Value: nil,
+				Hash:  "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
 			},
 		}
 
@@ -332,10 +354,12 @@ func testRepositoryContract(ctx context.Context, t *testing.T, newRepo func() se
 				ID:    "Alloc",
 				MType: models.Gauge,
 				Value: func(v float64) *float64 { return &v }(1.0),
+				Hash:  "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
 			},
 			{
 				ID:    "Unknown",
 				MType: "unknown_type",
+				Hash:  "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
 			},
 		}
 
@@ -359,6 +383,7 @@ func testRepositoryContract(ctx context.Context, t *testing.T, newRepo func() se
 				ID:    "Alloc",
 				MType: models.Gauge,
 				Value: func(v float64) *float64 { return &v }(1.0),
+				Hash:  "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
 			},
 		}
 

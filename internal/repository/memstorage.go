@@ -36,12 +36,12 @@ func (r *MemStorage) Save(ctx context.Context, metric models.Metrics) error {
 		r.metrics[key] = metric
 	case models.Counter:
 		if existing, ok := r.metrics[key]; ok {
-			existingDelta := *existing.Delta
-			newDelta := *metric.Delta
+			newDelta := *existing.Delta + *metric.Delta
 			r.metrics[key] = models.Metrics{
 				ID:    metric.ID,
 				MType: metric.MType,
-				Delta: func(v int64) *int64 { return &v }(existingDelta + newDelta),
+				Delta: &newDelta,
+				Hash:  metric.Hash,
 			}
 		} else {
 			r.metrics[key] = metric
@@ -107,6 +107,7 @@ func (r *MemStorage) SaveBatch(ctx context.Context, metrics []models.Metrics) er
 				ID:    m.ID,
 				MType: m.MType,
 				Value: m.Value,
+				Hash:  m.Hash,
 			}
 		case models.Counter:
 			existing, ok := tmp[key]
@@ -115,6 +116,7 @@ func (r *MemStorage) SaveBatch(ctx context.Context, metrics []models.Metrics) er
 					ID:    m.ID,
 					MType: m.MType,
 					Delta: m.Delta,
+					Hash:  m.Hash,
 				}
 			} else {
 				newDelta := *existing.Delta + *m.Delta
