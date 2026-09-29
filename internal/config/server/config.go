@@ -8,6 +8,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/strbnm/metrics/internal/config/db"
 )
 
 type StoreConfig struct {
@@ -17,8 +19,9 @@ type StoreConfig struct {
 }
 
 type Config struct {
-	RunAddr string
-	Store   StoreConfig
+	RunAddr        string
+	Store          StoreConfig
+	DatabaseConfig db.DatabaseConfig
 }
 
 // NewServerConfig создаёт конфигурацию со значениями по умолчанию
@@ -30,6 +33,7 @@ func NewServerConfig() *Config {
 			FileStoragePath: "metrics.json",
 			Restore:         true,
 		},
+		DatabaseConfig: db.DatabaseConfig{},
 	}
 }
 
@@ -40,6 +44,7 @@ func ParseFlags() (*Config, error) {
 	// Регистрируем флаги
 	flag.StringVar(&cfg.RunAddr, "a", cfg.RunAddr, "address and port to run server with format host:port")
 	flag.StringVar(&cfg.Store.FileStoragePath, "f", cfg.Store.FileStoragePath, "file path to store metrics")
+	flag.StringVar(&cfg.DatabaseConfig.DatabaseDSN, "d", "", "database DSN string")
 	flag.BoolVar(&cfg.Store.Restore, "r", cfg.Store.Restore, "restore metrics from disk storage")
 	storeInterval := flag.Int64("i", int64(cfg.Store.StoreInterval/time.Second),
 		"time interval between write data on disk in seconds")
@@ -71,6 +76,10 @@ func ParseFlags() (*Config, error) {
 		case "false":
 			cfg.Store.Restore = false
 		}
+	}
+
+	if envDatabaseDSN, ok := os.LookupEnv("DATABASE_DSN"); ok && envDatabaseDSN != "" {
+		cfg.DatabaseConfig.DatabaseDSN = envDatabaseDSN
 	}
 
 	// Валидируем RunAddr

@@ -33,15 +33,6 @@ func Compress(data []byte) ([]byte, error) {
 	return buf.Bytes(), nil
 }
 
-func Decompress(data []byte) ([]byte, error) {
-	reader, err := gzip.NewReader(bytes.NewReader(data))
-	if err != nil {
-		return nil, err
-	}
-	defer reader.Close()
-	return io.ReadAll(reader)
-}
-
 func NewWriter(w io.Writer) (*gzip.Writer, error) {
 	return gzip.NewWriterLevel(w, CompressionLevel)
 }

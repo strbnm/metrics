@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -9,27 +10,34 @@ import (
 	"strings"
 
 	"github.com/go-chi/chi/v5"
-	"github.com/strbnm/metrics/internal/model"
+	models "github.com/strbnm/metrics/internal/model"
 	"github.com/strbnm/metrics/internal/service"
 	"go.uber.org/zap"
 )
 
 type MetricsService interface {
-	UpdateMetric(metricType, metricName, valueStr string) error
-	ListAllMetrics() ([]models.Metrics, error)
-	GetMetricValue(metricName, metricType string) (string, error)
-	UpdateMetricFromModel(m models.Metrics) error
-	GetMetric(m *models.Metrics) error
+	UpdateMetric(ctx context.Context, metricType, metricName, valueStr string) error
+	ListAllMetrics(ctx context.Context) ([]models.Metrics, error)
+	GetMetricValue(ctx context.Context, metricName, metricType string) (string, error)
+	UpdateMetricFromModel(ctx context.Context, m models.Metrics) error
+	GetMetric(ctx context.Context, m *models.Metrics) error
+	UpdateMetrics(ctx context.Context, ms []models.Metrics) error
+}
+
+type Pinger interface {
+	Ping(ctx context.Context) error
 }
 
 type Handler struct {
 	service MetricsService
+	pinger  Pinger
 	logger  *zap.SugaredLogger
 }
 
-func NewHandler(service MetricsService, logger *zap.SugaredLogger) *Handler {
+func NewHandler(service MetricsService, pinger Pinger, logger *zap.SugaredLogger) *Handler {
 	return &Handler{
 		service: service,
+		pinger:  pinger,
 		logger:  logger,
 	}
 
@@ -40,7 +48,7 @@ func (h *Handler) UpdateHandler(w http.ResponseWriter, r *http.Request) {
 	metricName := chi.URLParam(r, "metricName")
 	valueStr := chi.URLParam(r, "metricValue")
 
-	err := h.service.UpdateMetric(metricType, metricName, valueStr)
+	err := h.service.UpdateMetric(r.Context(), metricType, metricName, valueStr)
 	if err != nil {
 		switch {
 		case errors.Is(err, service.ErrInvalidMetricValue):
@@ -64,7 +72,7 @@ func (h *Handler) UpdateHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) ListAllMetricsHandler(w http.ResponseWriter, r *http.Request) {
-	metrics, err := h.service.ListAllMetrics()
+	metrics, err := h.service.ListAllMetrics(r.Context())
 	if err != nil {
 		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
 		return
@@ -93,7 +101,7 @@ func (h *Handler) ValueHandler(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Metric name is required", http.StatusNotFound)
 	}
 
-	metricValue, err := h.service.GetMetricValue(metricName, metricType)
+	metricValue, err := h.service.GetMetricValue(r.Context(), metricName, metricType)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusNotFound)
 		return
@@ -144,7 +152,7 @@ func (h *Handler) UpdateJSONHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	err := h.service.UpdateMetricFromModel(metric)
+	err := h.service.UpdateMetricFromModel(r.Context(), metric)
 	if err != nil {
 		switch {
 		case errors.Is(err, service.ErrEmptyMetricValue):
@@ -170,7 +178,7 @@ func (h *Handler) ValueJSONHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	err := h.service.GetMetric(&m)
+	err := h.service.GetMetric(r.Context(), &m)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusNotFound)
 		return
@@ -181,4 +189,50 @@ func (h *Handler) ValueJSONHandler(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		return
 	}
+}
+
+func (h *Handler) Ping(w http.ResponseWriter, r *http.Request) {
+	if h.pinger == nil {
+		// БД не настроена — возвращаем 500
+		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
+		return
+	}
+	if err := h.pinger.Ping(r.Context()); err != nil {
+		h.logger.Errorf("db ping failed: %v", err)
+		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
+		return
+	}
+	w.WriteHeader(http.StatusOK)
+}
+
+func (h *Handler) UpdateBatchJSONHandler(w http.ResponseWriter, r *http.Request) {
+	var metrics []models.Metrics
+
+	if err := json.NewDecoder(r.Body).Decode(&metrics); err != nil {
+		h.logger.Errorw("failed to decode batch", "error", err)
+		http.Error(w, "invalid request body", http.StatusBadRequest)
+		return
+	}
+
+	if len(metrics) == 0 {
+		http.Error(w, "empty batch", http.StatusBadRequest)
+		return
+	}
+
+	if err := h.service.UpdateMetrics(r.Context(), metrics); err != nil {
+		switch {
+		case errors.Is(err, service.ErrInvalidMetricType):
+			http.Error(w, "invalid metric type", http.StatusBadRequest)
+		case errors.Is(err, service.ErrEmptyMetricName):
+			http.Error(w, "empty metric name", http.StatusBadRequest)
+		default:
+			h.logger.Errorw("failed to save batch", "error", err)
+			http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
+		}
+		return
+	}
+
+	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+	w.WriteHeader(http.StatusOK)
+	fmt.Fprint(w, "OK")
 }

@@ -1,7 +1,7 @@
 package repository
 
 import (
-	"errors"
+	"context"
 	"sync"
 
 	models "github.com/strbnm/metrics/internal/model"
@@ -18,52 +18,60 @@ func NewMemStorage() *MemStorage {
 	}
 }
 
-func (r *MemStorage) Save(metric models.Metrics) error {
+func (r *MemStorage) Save(ctx context.Context, metric models.Metrics) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+
 	r.mu.Lock()
 	defer r.mu.Unlock()
+
+	if err := validate(metric); err != nil {
+		return err
+	}
 
 	key := buildKey(metric.ID, metric.MType)
 	switch metric.MType {
 	case models.Gauge:
-		if metric.Value == nil {
-			return errors.New("gauge metric must have a value")
-		}
 		r.metrics[key] = metric
 	case models.Counter:
-		if metric.Delta == nil {
-			return errors.New("counter metric must have a delta")
-		}
 		if existing, ok := r.metrics[key]; ok {
-			existingDelta := *existing.Delta
-			newDelta := *metric.Delta
+			newDelta := *existing.Delta + *metric.Delta
 			r.metrics[key] = models.Metrics{
 				ID:    metric.ID,
 				MType: metric.MType,
-				Delta: func(v int64) *int64 { return &v }(existingDelta + newDelta),
+				Delta: &newDelta,
+				Hash:  metric.Hash,
 			}
 		} else {
 			r.metrics[key] = metric
 		}
-	default:
-		return errors.New("unknown metric type")
 	}
 
 	return nil
 }
 
-func (r *MemStorage) Get(id string, mType string) (models.Metrics, error) {
+func (r *MemStorage) Get(ctx context.Context, id string, mType string) (models.Metrics, error) {
+	if err := ctx.Err(); err != nil {
+		return models.Metrics{}, err
+	}
+
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 
 	key := buildKey(id, mType)
 	metric, ok := r.metrics[key]
 	if !ok {
-		return models.Metrics{}, errors.New("metric not found")
+		return models.Metrics{}, ErrMetricNotFound
 	}
 	return metric, nil
 }
 
-func (r *MemStorage) List() ([]models.Metrics, error) {
+func (r *MemStorage) List(ctx context.Context) ([]models.Metrics, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 
@@ -74,6 +82,74 @@ func (r *MemStorage) List() ([]models.Metrics, error) {
 	return metrics, nil
 }
 
+func (r *MemStorage) SaveBatch(ctx context.Context, metrics []models.Metrics) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	tmp := make(map[string]models.Metrics, len(r.metrics))
+	for k, v := range r.metrics {
+		tmp[k] = v
+	}
+
+	for _, m := range metrics {
+		if err := validate(m); err != nil {
+			return err
+		}
+		key := buildKey(m.ID, m.MType)
+
+		switch m.MType {
+		case models.Gauge:
+			tmp[key] = models.Metrics{
+				ID:    m.ID,
+				MType: m.MType,
+				Value: m.Value,
+				Hash:  m.Hash,
+			}
+		case models.Counter:
+			existing, ok := tmp[key]
+			if !ok {
+				tmp[key] = models.Metrics{
+					ID:    m.ID,
+					MType: m.MType,
+					Delta: m.Delta,
+					Hash:  m.Hash,
+				}
+			} else {
+				newDelta := *existing.Delta + *m.Delta
+				tmp[key] = models.Metrics{
+					ID:    m.ID,
+					MType: m.MType,
+					Delta: &newDelta,
+					Hash:  m.Hash,
+				}
+			}
+		}
+	}
+
+	r.metrics = tmp
+	return nil
+}
+
 func buildKey(id string, mType string) string {
 	return id + mType
+}
+
+func validate(m models.Metrics) error {
+	switch m.MType {
+	case models.Gauge:
+		if m.Value == nil {
+			return ErrGaugeMetricIsEmptyValue
+		}
+	case models.Counter:
+		if m.Delta == nil {
+			return ErrCounterMetricIsEmptyValue
+		}
+	default:
+		return ErrInvalidMetricType
+	}
+	return nil
 }

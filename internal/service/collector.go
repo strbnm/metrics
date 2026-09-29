@@ -1,52 +1,53 @@
 package service
 
 import (
-	"fmt"
+	"context"
+	"log"
 	"math/rand/v2"
 	"runtime"
+	"sync"
 	"time"
 
 	models "github.com/strbnm/metrics/internal/model"
 )
 
 type Collector struct {
-	pollInterval      time.Duration
-	reportInterval    time.Duration
+	pollInterval   time.Duration
+	reportInterval time.Duration
+
+	mu                sync.RWMutex
 	pollCount         int64
 	lastSentPollCount int64
 	lastMetrics       []models.Metrics
-	lastSendTime      time.Time
 }
 
 func NewCollector(pollInterval, reportInterval time.Duration) *Collector {
 	return &Collector{
-		pollInterval:      pollInterval,
-		reportInterval:    reportInterval,
-		pollCount:         0,
-		lastSentPollCount: 0,
-		lastSendTime:      time.Now(),
+		pollInterval:   pollInterval,
+		reportInterval: reportInterval,
 	}
 }
 
-func uint64ToFloat64(value uint64) *float64 {
-	v := float64(value)
+// ptr возвращает указатель на значение.
+func ptr[T any](v T) *T {
 	return &v
+}
+
+func uint64ToFloat64(value uint64) *float64 {
+	return ptr(float64(value))
 }
 
 func uint32ToFloat64(value uint32) *float64 {
-	v := float64(value)
-	return &v
+	return ptr(float64(value))
 }
 
-func (c *Collector) collectOnce() {
+// collectRuntimeMetrics собирает gauge-метрики из runtime.MemStats
+// и случайное значение RandomValue. Не зависит от состояния коллектора.
+func collectRuntimeMetrics() []models.Metrics {
 	var m runtime.MemStats
 	runtime.ReadMemStats(&m)
 
-	c.pollCount++
-
-	delta := c.pollCount - c.lastSentPollCount
-
-	metrics := []models.Metrics{
+	return []models.Metrics{
 		{ID: "Alloc", MType: models.Gauge, Value: uint64ToFloat64(m.Alloc)},
 		{ID: "BuckHashSys", MType: models.Gauge, Value: uint64ToFloat64(m.BuckHashSys)},
 		{ID: "Frees", MType: models.Gauge, Value: uint64ToFloat64(m.Frees)},
@@ -74,38 +75,65 @@ func (c *Collector) collectOnce() {
 		{ID: "StackSys", MType: models.Gauge, Value: uint64ToFloat64(m.StackSys)},
 		{ID: "Sys", MType: models.Gauge, Value: uint64ToFloat64(m.Sys)},
 		{ID: "TotalAlloc", MType: models.Gauge, Value: uint64ToFloat64(m.TotalAlloc)},
-
 		// Дополнительные метрики
-		{ID: "PollCount", MType: models.Counter, Delta: &delta},
-		{ID: "RandomValue", MType: models.Gauge, Value: func() *float64 {
-			v := rand.Float64()
-			return &v
-		}()},
+		{ID: "RandomValue", MType: models.Gauge, Value: ptr(rand.Float64())},
 	}
+}
 
+func (c *Collector) collectOnce() {
+	c.pollCount++
+
+	metrics := collectRuntimeMetrics()
+
+	delta := c.pollCount - c.lastSentPollCount
+	metrics = append(metrics,
+		models.Metrics{ID: "PollCount", MType: models.Counter, Delta: &delta},
+	)
+
+	c.setMetrics(metrics)
+}
+
+func (c *Collector) setMetrics(metrics []models.Metrics) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
 	c.lastMetrics = metrics
 }
 
 func (c *Collector) GetLastMetrics() []models.Metrics {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
 	return c.lastMetrics
 }
 
-func (c *Collector) Start(sendFunc func([]models.Metrics) error) {
+func (c *Collector) Start(ctx context.Context, sendFunc func(ctx context.Context, metrics []models.Metrics) error) {
 	c.collectOnce()
 
+	pollTicker := time.NewTicker(c.pollInterval)
+	defer pollTicker.Stop()
+
+	reportTicker := time.NewTicker(c.reportInterval)
+	defer reportTicker.Stop()
+
 	for {
-		time.Sleep(c.pollInterval)
-		c.collectOnce()
-
-		if time.Since(c.lastSendTime) >= c.reportInterval {
-			metrics := c.GetLastMetrics()
-			if err := sendFunc(metrics); err != nil {
-
-				fmt.Printf("Failed to send metrics: %v\n", err)
-			} else {
-				c.lastSentPollCount = c.pollCount
-			}
-			c.lastSendTime = time.Now()
+		select {
+		case <-ctx.Done():
+			return
+		case <-pollTicker.C:
+			c.collectOnce()
+		case <-reportTicker.C:
+			c.reportOnce(ctx, sendFunc)
 		}
 	}
+}
+
+// reportOnce отправляет последний снимок метрик; счётчик отправленных
+// опросов увеличивается только после успешной отправки.
+func (c *Collector) reportOnce(ctx context.Context, sendFunc func(ctx context.Context, metrics []models.Metrics) error) error {
+	metrics := c.GetLastMetrics()
+	if err := sendFunc(ctx, metrics); err != nil {
+		log.Printf("Failed to send metrics: %v", err)
+		return err
+	}
+	c.lastSentPollCount = c.pollCount
+	return nil
 }

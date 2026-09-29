@@ -1,6 +1,8 @@
 package service
 
 import (
+	"context"
+	"errors"
 	"testing"
 	"time"
 
@@ -20,7 +22,6 @@ func TestNewCollector(t *testing.T) {
 	assert.Equal(t, pollInterval, collector.pollInterval, "pollInterval mismatch")
 	assert.Equal(t, reportInterval, collector.reportInterval, "reportInterval mismatch")
 	assert.Equal(t, int64(0), collector.pollCount, "initial pollCount should be 0")
-	assert.False(t, collector.lastSendTime.IsZero(), "lastSendTime should be set to current time")
 }
 
 func TestUint64ToFloat64(t *testing.T) {
@@ -147,27 +148,40 @@ func TestCollector_Start_SingleIteration(t *testing.T) {
 	collector := NewCollector(pollInterval, reportInterval)
 
 	sentMetrics := make([][]models.Metrics, 0)
-	sendFunc := func(metrics []models.Metrics) error {
+	sendFunc := func(ctx context.Context, metrics []models.Metrics) error {
 		sentMetrics = append(sentMetrics, metrics)
 		return nil
 	}
 
-	// Имитируем одну итерацию цикла Start
+	// reportOnce отправляет последний снимок метрик
 	collector.collectOnce()
-
-	// Пропускаем время, чтобы условие отправки выполнилось
-	collector.lastSendTime = collector.lastSendTime.Add(-reportInterval - 1*time.Millisecond)
-
-	collector.collectOnce()
-
-	if time.Since(collector.lastSendTime) >= collector.reportInterval {
-		metrics := collector.GetLastMetrics()
-		err := sendFunc(metrics)
-		require.NoError(t, err, "sendFunc returned error")
-		collector.lastSendTime = time.Now()
-	}
+	require.NoError(t, collector.reportOnce(t.Context(), sendFunc))
 
 	// Проверяем, что метрики были отправлены
 	require.Len(t, sentMetrics, 1, "Expected exactly 1 metric send")
 	assert.NotEmpty(t, sentMetrics[0], "Sent metrics should not be empty")
+	assert.Equal(t, collector.pollCount, collector.lastSentPollCount,
+		"после успешной отправки lastSentPollCount должен догнать pollCount")
+}
+
+func TestCollector_reportOnce_FailedSendKeepsLastSentPollCount(t *testing.T) {
+	collector := NewCollector(10*time.Millisecond, 20*time.Millisecond)
+
+	collector.collectOnce()
+	require.Error(t, collector.reportOnce(t.Context(), func(ctx context.Context, metrics []models.Metrics) error {
+		return errors.New("send failed")
+	}))
+
+	assert.Equal(t, int64(0), collector.lastSentPollCount,
+		"неудачная отправка не должна обновлять lastSentPollCount")
+
+	// следующий опрос включает неучтённую дельту
+	collector.collectOnce()
+	for _, m := range collector.GetLastMetrics() {
+		if m.ID == "PollCount" {
+			require.NotNil(t, m.Delta)
+			assert.Equal(t, collector.pollCount, *m.Delta,
+				"после неудачной отправки дельта PollCount накапливается")
+		}
+	}
 }

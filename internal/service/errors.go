@@ -7,4 +7,5 @@ var (
 	ErrInvalidMetricType  = errors.New("service: invalid metric type")
 	ErrEmptyMetricValue   = errors.New("service: metric value is empty")
 	ErrEmptyMetricName    = errors.New("service: metric name is empty")
+	ErrEmptyBatch         = errors.New("service: batch is empty")
 )

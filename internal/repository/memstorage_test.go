@@ -18,9 +18,11 @@ func TestNewMemStorage(t *testing.T) {
 	})
 }
 
-// TestMemStorage_Contract — запускаем тесты контракта Repository для MemStorage
+// TestMemStorage_Contract — тесты контракта Repository для MemStorage
 func TestMemStorage_Contract(t *testing.T) {
-	testRepositoryContract(t, func() service.Repository {
+	ctx := t.Context()
+
+	testRepositoryContract(ctx, t, func() service.Repository {
 		return NewMemStorage()
 	})
 }

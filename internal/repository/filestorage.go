@@ -1,6 +1,7 @@
 package repository
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -37,13 +38,13 @@ func NewFileStorage(fileName string, isSyncFlush, restore bool, logger *zap.Suga
 	return fileStorage
 }
 
-func (r *FileStorage) Save(metric models.Metrics) error {
-	err := r.MemStorage.Save(metric)
+func (r *FileStorage) Save(ctx context.Context, metric models.Metrics) error {
+	err := r.MemStorage.Save(ctx, metric)
 	if err != nil {
 		return err
 	}
 	if r.isSyncFlush {
-		err = r.Flush()
+		err = r.Flush(ctx)
 		if err != nil {
 			return err
 		}
@@ -83,8 +84,8 @@ func (r *FileStorage) Load() error {
 	return nil
 }
 
-func (r *FileStorage) Flush() error {
-	listMetrics, err := r.MemStorage.List()
+func (r *FileStorage) Flush(ctx context.Context) error {
+	listMetrics, err := r.MemStorage.List(ctx)
 	if err != nil {
 		return err
 	}
@@ -105,5 +106,19 @@ func (r *FileStorage) Flush() error {
 		return fmt.Errorf("repository: rename temp file: %w", errRename)
 	}
 
+	return nil
+}
+
+func (r *FileStorage) SaveBatch(ctx context.Context, metrics []models.Metrics) error {
+	err := r.MemStorage.SaveBatch(ctx, metrics)
+	if err != nil {
+		return err
+	}
+	if r.isSyncFlush {
+		err = r.Flush(ctx)
+		if err != nil {
+			return err
+		}
+	}
 	return nil
 }

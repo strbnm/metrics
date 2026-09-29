@@ -131,18 +131,19 @@ func TestSender_Send(t *testing.T) {
 			},
 			serverHandler: middleware.GzipMiddleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				assert.Equal(t, http.MethodPost, r.Method)
-				assert.Equal(t, "/update", r.URL.Path)
+				assert.Equal(t, "/updates", r.URL.Path)
 				assert.Equal(t, "application/json; charset=utf-8", r.Header.Get("Content-Type"))
+				assert.Equal(t, "gzip", r.Header.Get("Content-Encoding"))
 
-				var received models.Metrics
-				// Читаем и парсим сразу
+				var received []models.Metrics
 				err := json.NewDecoder(r.Body).Decode(&received)
 				require.NoError(t, err)
 				defer r.Body.Close()
 
-				assert.Equal(t, models.Gauge, received.MType)
-				assert.Equal(t, 1.0001, *received.Value)
-				assert.Equal(t, "Alloc", received.ID)
+				require.Len(t, received, 1)
+				assert.Equal(t, models.Gauge, received[0].MType)
+				assert.Equal(t, 1.0001, *received[0].Value)
+				assert.Equal(t, "Alloc", received[0].ID)
 
 				w.WriteHeader(http.StatusOK)
 				fmt.Fprint(w, "OK")
@@ -165,39 +166,47 @@ func TestSender_Send(t *testing.T) {
 			},
 			serverHandler: middleware.GzipMiddleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				assert.Equal(t, http.MethodPost, r.Method)
-				assert.Equal(t, "/update", r.URL.Path)
+				assert.Equal(t, "/updates", r.URL.Path)
 				assert.Equal(t, "application/json; charset=utf-8", r.Header.Get("Content-Type"))
 
-				var received models.Metrics
-				// Читаем и парсим сразу
+				var received []models.Metrics
 				err := json.NewDecoder(r.Body).Decode(&received)
 				require.NoError(t, err)
 				defer r.Body.Close()
 
-				switch received.MType {
-				case models.Gauge:
-					assert.Equal(t, models.Gauge, received.MType)
-					assert.Equal(t, 1.0001, *received.Value)
-					assert.Equal(t, "Alloc", received.ID)
+				require.Len(t, received, 2)
 
-					w.WriteHeader(http.StatusOK)
-					fmt.Fprint(w, "OK")
-
-				case models.Counter:
-					assert.Equal(t, models.Counter, received.MType)
-					assert.Equal(t, int64(100), *received.Delta)
-					assert.Equal(t, "PollCount", received.ID)
-
-					w.WriteHeader(http.StatusOK)
-					fmt.Fprint(w, "OK")
-				default:
-					w.WriteHeader(http.StatusNotFound)
+				var foundGauge, foundCounter bool
+				for _, m := range received {
+					switch m.MType {
+					case models.Gauge:
+						assert.Equal(t, "Alloc", m.ID)
+						assert.Equal(t, 1.0001, *m.Value)
+						foundGauge = true
+					case models.Counter:
+						assert.Equal(t, "PollCount", m.ID)
+						assert.Equal(t, int64(100), *m.Delta)
+						foundCounter = true
+					}
 				}
+				assert.True(t, foundGauge)
+				assert.True(t, foundCounter)
+
+				w.WriteHeader(http.StatusOK)
+				fmt.Fprint(w, "OK")
 			})),
 			wantErr: false,
 		},
 		{
-			name: "negative test #2 - server returns error status",
+			name:    "positive test #3 - empty batch returns nil without request",
+			metrics: []models.Metrics{},
+			serverHandler: middleware.GzipMiddleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				t.Fatal("server should not be called for empty batch")
+			})),
+			wantErr: false,
+		},
+		{
+			name: "negative test #4 - server returns error status",
 			metrics: []models.Metrics{
 				{
 					ID:    "ErrorMetric",
@@ -212,31 +221,32 @@ func TestSender_Send(t *testing.T) {
 			errContains: "server returned status: 500",
 		},
 		{
-			name: "negative test #3 - http client error",
+			name: "negative test #5 - server returns bad request",
 			metrics: []models.Metrics{
 				{
-					ID:    "ClientError",
-					MType: models.Gauge,
-					Value: func(v float64) *float64 { return &v }(1.0),
+					ID:    "BadRequest",
+					MType: models.Counter,
+					Delta: func(v int64) *int64 { return &v }(1),
 				},
 			},
 			serverHandler: middleware.GzipMiddleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				http.Error(w, "Client error", http.StatusBadRequest)
+				http.Error(w, "bad request", http.StatusBadRequest)
 			})),
 			wantErr:     true,
-			errContains: "failed to send metric ClientError",
+			errContains: "server returned status: 400",
 		},
 	}
 
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
+			ctx := t.Context()
 			server := httptest.NewServer(test.serverHandler)
 			defer server.Close()
 
 			sender, err := NewSender(server.URL)
 			assert.NoError(t, err)
 
-			sendErr := sender.Send(test.metrics)
+			sendErr := sender.Send(ctx, test.metrics)
 
 			if test.wantErr {
 				require.Error(t, sendErr)

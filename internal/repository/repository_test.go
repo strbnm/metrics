@@ -1,6 +1,7 @@
 package repository
 
 import (
+	"context"
 	"testing"
 
 	models "github.com/strbnm/metrics/internal/model"
@@ -10,7 +11,7 @@ import (
 )
 
 // Базовый набор тест-кейсов для интерфейса Repository
-func testRepositoryContract(t *testing.T, newRepo func() service.Repository) {
+func testRepositoryContract(ctx context.Context, t *testing.T, newRepo func() service.Repository) {
 	t.Run("save and get gauge metric", func(t *testing.T) {
 		repo := newRepo()
 
@@ -18,11 +19,12 @@ func testRepositoryContract(t *testing.T, newRepo func() service.Repository) {
 			ID:    "Alloc",
 			MType: models.Gauge,
 			Value: func(v float64) *float64 { return &v }(1.0),
+			Hash:  "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
 		}
 
-		require.NoError(t, repo.Save(metric))
+		require.NoError(t, repo.Save(ctx, metric))
 
-		got, err := repo.Get(metric.ID, metric.MType)
+		got, err := repo.Get(ctx, metric.ID, metric.MType)
 		require.NoError(t, err)
 		assert.Equal(t, metric, got)
 	})
@@ -34,11 +36,12 @@ func testRepositoryContract(t *testing.T, newRepo func() service.Repository) {
 			ID:    "PollCount",
 			MType: models.Counter,
 			Delta: func(v int64) *int64 { return &v }(100),
+			Hash:  "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
 		}
 
-		require.NoError(t, repo.Save(metric))
+		require.NoError(t, repo.Save(ctx, metric))
 
-		got, err := repo.Get(metric.ID, metric.MType)
+		got, err := repo.Get(ctx, metric.ID, metric.MType)
 		require.NoError(t, err)
 		assert.Equal(t, metric, got)
 	})
@@ -46,15 +49,15 @@ func testRepositoryContract(t *testing.T, newRepo func() service.Repository) {
 	t.Run("get non-existent metric returns error", func(t *testing.T) {
 		repo := newRepo()
 
-		_, err := repo.Get("NonExistent", models.Gauge)
+		_, err := repo.Get(ctx, "NonExistent", models.Gauge)
 		require.Error(t, err)
-		assert.Contains(t, err.Error(), "metric not found")
+		assert.ErrorIs(t, err, ErrMetricNotFound)
 	})
 
 	t.Run("list empty storage", func(t *testing.T) {
 		repo := newRepo()
 
-		metrics, err := repo.List()
+		metrics, err := repo.List(ctx)
 		require.NoError(t, err)
 		assert.Empty(t, metrics)
 	})
@@ -66,17 +69,19 @@ func testRepositoryContract(t *testing.T, newRepo func() service.Repository) {
 			ID:    "Alloc",
 			MType: models.Gauge,
 			Value: func(v float64) *float64 { return &v }(2.5),
+			Hash:  "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
 		}
 		counterMetric := models.Metrics{
 			ID:    "Requests",
 			MType: models.Counter,
 			Delta: func(v int64) *int64 { return &v }(42),
+			Hash:  "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
 		}
 
-		require.NoError(t, repo.Save(gaugeMetric))
-		require.NoError(t, repo.Save(counterMetric))
+		require.NoError(t, repo.Save(ctx, gaugeMetric))
+		require.NoError(t, repo.Save(ctx, counterMetric))
 
-		metrics, err := repo.List()
+		metrics, err := repo.List(ctx)
 		require.NoError(t, err)
 		assert.Len(t, metrics, 2)
 
@@ -101,11 +106,12 @@ func testRepositoryContract(t *testing.T, newRepo func() service.Repository) {
 			ID:    "InvalidGauge",
 			MType: models.Gauge,
 			Value: nil,
+			Hash:  "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
 		}
 
-		err := repo.Save(metric)
+		err := repo.Save(ctx, metric)
 		require.Error(t, err)
-		assert.Contains(t, err.Error(), "gauge metric must have a value")
+		assert.ErrorIs(t, err, ErrGaugeMetricIsEmptyValue)
 	})
 
 	t.Run("counter without delta returns error", func(t *testing.T) {
@@ -115,11 +121,12 @@ func testRepositoryContract(t *testing.T, newRepo func() service.Repository) {
 			ID:    "InvalidCounter",
 			MType: models.Counter,
 			Delta: nil,
+			Hash:  "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
 		}
 
-		err := repo.Save(metric)
+		err := repo.Save(ctx, metric)
 		require.Error(t, err)
-		assert.Contains(t, err.Error(), "counter metric must have a delta")
+		assert.ErrorIs(t, err, ErrCounterMetricIsEmptyValue)
 	})
 
 	t.Run("update existing gauge_value returns new value", func(t *testing.T) {
@@ -129,21 +136,23 @@ func testRepositoryContract(t *testing.T, newRepo func() service.Repository) {
 			ID:    "Alloc",
 			MType: models.Gauge,
 			Value: func(v float64) *float64 { return &v }(2.5),
+			Hash:  "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
 		}
 
 		newMetric := models.Metrics{
 			ID:    "Alloc",
 			MType: models.Gauge,
 			Value: func(v float64) *float64 { return &v }(25.0),
+			Hash:  "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
 		}
 
-		err := repo.Save(oldMetric)
+		err := repo.Save(ctx, oldMetric)
 		require.NoError(t, err)
 
-		err = repo.Save(newMetric)
+		err = repo.Save(ctx, newMetric)
 		require.NoError(t, err)
 
-		got, err := repo.Get(newMetric.ID, models.Gauge)
+		got, err := repo.Get(ctx, newMetric.ID, models.Gauge)
 		require.NoError(t, err)
 		assert.Equal(t, 25.0, *got.Value)
 	})
@@ -155,21 +164,23 @@ func testRepositoryContract(t *testing.T, newRepo func() service.Repository) {
 			ID:    "PullCount",
 			MType: models.Counter,
 			Delta: func(v int64) *int64 { return &v }(50),
+			Hash:  "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
 		}
 
 		newMetric := models.Metrics{
 			ID:    "PullCount",
 			MType: models.Counter,
 			Delta: func(v int64) *int64 { return &v }(100),
+			Hash:  "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
 		}
 
-		err := repo.Save(oldMetric)
+		err := repo.Save(ctx, oldMetric)
 		require.NoError(t, err)
 
-		err = repo.Save(newMetric)
+		err = repo.Save(ctx, newMetric)
 		require.NoError(t, err)
 
-		got, err := repo.Get(newMetric.ID, models.Counter)
+		got, err := repo.Get(ctx, newMetric.ID, models.Counter)
 		require.NoError(t, err)
 		assert.Equal(t, int64(150), *got.Delta)
 	})
@@ -180,10 +191,204 @@ func testRepositoryContract(t *testing.T, newRepo func() service.Repository) {
 		metric := models.Metrics{
 			ID:    "Unknown",
 			MType: "unknown_type",
+			Hash:  "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
 		}
 
-		err := repo.Save(metric)
+		err := repo.Save(ctx, metric)
 		require.Error(t, err)
-		assert.Contains(t, err.Error(), "unknown metric type")
+		assert.ErrorIs(t, err, ErrInvalidMetricType)
+	})
+
+	t.Run("save with canceled context returns error", func(t *testing.T) {
+		repo := newRepo()
+
+		childCtx, cancel := context.WithCancel(ctx)
+		cancel()
+
+		metric := models.Metrics{
+			ID:    "Alloc",
+			MType: models.Gauge,
+			Value: func(v float64) *float64 { return &v }(1.0),
+			Hash:  "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+		}
+
+		err := repo.Save(childCtx, metric)
+		require.Error(t, err)
+		assert.ErrorIs(t, err, context.Canceled)
+	})
+
+	t.Run("save batch with mixed metrics", func(t *testing.T) {
+		repo := newRepo()
+
+		batch := []models.Metrics{
+			{
+				ID:    "Alloc",
+				MType: models.Gauge,
+				Value: func(v float64) *float64 { return &v }(1.5),
+				Hash:  "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+			},
+			{
+				ID:    "PollCount",
+				MType: models.Counter,
+				Delta: func(v int64) *int64 { return &v }(10),
+				Hash:  "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+			},
+			{
+				ID:    "HeapInuse",
+				MType: models.Gauge,
+				Value: func(v float64) *float64 { return &v }(42.0),
+				Hash:  "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+			},
+		}
+
+		require.NoError(t, repo.SaveBatch(ctx, batch))
+
+		// проверяем, что все три метрики сохранились
+		got, err := repo.List(ctx)
+		require.NoError(t, err)
+		assert.Len(t, got, 3)
+	})
+
+	t.Run("save empty batch does nothing", func(t *testing.T) {
+		repo := newRepo()
+
+		err := repo.SaveBatch(ctx, []models.Metrics{})
+		require.NoError(t, err)
+
+		metrics, err := repo.List(ctx)
+		require.NoError(t, err)
+		assert.Empty(t, metrics)
+	})
+
+	t.Run("save batch with counter accumulates delta", func(t *testing.T) {
+		repo := newRepo()
+
+		// сначала сохраняем начальное значение
+		require.NoError(t, repo.Save(ctx, models.Metrics{
+			ID:    "PollCount",
+			MType: models.Counter,
+			Delta: func(v int64) *int64 { return &v }(50),
+			Hash:  "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+		}))
+
+		// батчем добавляем ещё
+		batch := []models.Metrics{
+			{
+				ID:    "PollCount",
+				MType: models.Counter,
+				Delta: func(v int64) *int64 { return &v }(30),
+				Hash:  "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+			},
+			{
+				ID:    "PollCount",
+				MType: models.Counter,
+				Delta: func(v int64) *int64 { return &v }(20),
+				Hash:  "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+			},
+		}
+		require.NoError(t, repo.SaveBatch(ctx, batch))
+
+		got, err := repo.Get(ctx, "PollCount", models.Counter)
+		require.NoError(t, err)
+		assert.Equal(t, int64(100), *got.Delta)
+	})
+
+	t.Run("save batch with gauge overwrites value", func(t *testing.T) {
+		repo := newRepo()
+
+		require.NoError(t, repo.Save(ctx, models.Metrics{
+			ID:    "Alloc",
+			MType: models.Gauge,
+			Value: func(v float64) *float64 { return &v }(10.0),
+			Hash:  "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+		}))
+
+		batch := []models.Metrics{
+			{
+				ID:    "Alloc",
+				MType: models.Gauge,
+				Value: func(v float64) *float64 { return &v }(99.9),
+				Hash:  "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+			},
+		}
+		require.NoError(t, repo.SaveBatch(ctx, batch))
+
+		got, err := repo.Get(ctx, "Alloc", models.Gauge)
+		require.NoError(t, err)
+		assert.Equal(t, 99.9, *got.Value)
+	})
+
+	t.Run("save batch with invalid metric rolls back", func(t *testing.T) {
+		repo := newRepo()
+
+		batch := []models.Metrics{
+			{
+				ID:    "ValidGauge",
+				MType: models.Gauge,
+				Value: func(v float64) *float64 { return &v }(1.0),
+				Hash:  "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+			},
+			{
+				ID:    "InvalidGauge",
+				MType: models.Gauge,
+				Value: nil,
+				Hash:  "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+			},
+		}
+
+		err := repo.SaveBatch(ctx, batch)
+		require.Error(t, err)
+		assert.ErrorIs(t, err, ErrGaugeMetricIsEmptyValue)
+
+		// валидная метрика не должна сохраниться — транзакция откатилась
+		metrics, listErr := repo.List(ctx)
+		require.NoError(t, listErr)
+		assert.Empty(t, metrics)
+	})
+
+	t.Run("save batch with unknown metric type rolls back", func(t *testing.T) {
+		repo := newRepo()
+
+		batch := []models.Metrics{
+			{
+				ID:    "Alloc",
+				MType: models.Gauge,
+				Value: func(v float64) *float64 { return &v }(1.0),
+				Hash:  "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+			},
+			{
+				ID:    "Unknown",
+				MType: "unknown_type",
+				Hash:  "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+			},
+		}
+
+		err := repo.SaveBatch(ctx, batch)
+		require.Error(t, err)
+		assert.ErrorIs(t, err, ErrInvalidMetricType)
+
+		metrics, listErr := repo.List(ctx)
+		require.NoError(t, listErr)
+		assert.Empty(t, metrics)
+	})
+
+	t.Run("save batch with canceled context returns error", func(t *testing.T) {
+		repo := newRepo()
+
+		childCtx, cancel := context.WithCancel(ctx)
+		cancel()
+
+		batch := []models.Metrics{
+			{
+				ID:    "Alloc",
+				MType: models.Gauge,
+				Value: func(v float64) *float64 { return &v }(1.0),
+				Hash:  "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+			},
+		}
+
+		err := repo.SaveBatch(childCtx, batch)
+		require.Error(t, err)
+		assert.ErrorIs(t, err, context.Canceled)
 	})
 }
