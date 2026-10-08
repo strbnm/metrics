@@ -22,6 +22,7 @@ type Config struct {
 	RunAddr        string
 	Store          StoreConfig
 	DatabaseConfig db.DatabaseConfig
+	SignKey        string
 }
 
 // NewServerConfig создаёт конфигурацию со значениями по умолчанию
@@ -48,6 +49,8 @@ func ParseFlags() (*Config, error) {
 	flag.BoolVar(&cfg.Store.Restore, "r", cfg.Store.Restore, "restore metrics from disk storage")
 	storeInterval := flag.Int64("i", int64(cfg.Store.StoreInterval/time.Second),
 		"time interval between write data on disk in seconds")
+
+	flag.StringVar(&cfg.SignKey, "k", cfg.SignKey, "key for check sign request data and sign response data")
 
 	flag.Parse()
 
@@ -80,6 +83,10 @@ func ParseFlags() (*Config, error) {
 
 	if envDatabaseDSN, ok := os.LookupEnv("DATABASE_DSN"); ok && envDatabaseDSN != "" {
 		cfg.DatabaseConfig.DatabaseDSN = envDatabaseDSN
+	}
+
+	if envSignKey, ok := os.LookupEnv("KEY"); ok && envSignKey != "" {
+		cfg.SignKey = strings.TrimSpace(envSignKey)
 	}
 
 	// Валидируем RunAddr

@@ -55,7 +55,7 @@ func ParseFlags() (*Config, error) {
 	reportInterval := flag.Int64("r", int64(cfg.CollectorConfig.ReportInterval/time.Second),
 		"time interval between reports in seconds")
 
-	flag.StringVar(&cfg.ServerConfig.SignKey, "k", cfg.ServerConfig.SignKey, "key for sign request data")
+	flag.StringVar(&cfg.ServerConfig.SignKey, "k", cfg.ServerConfig.SignKey, "key for sign response data")
 
 	flag.Parse()
 
