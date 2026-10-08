@@ -18,6 +18,7 @@ func TestNewServerConfig(t *testing.T) {
 	assert.Equal(t, 300*time.Second, cfg.Store.StoreInterval, "StoreInterval должен быть 300 сек. по умолчанию")
 	assert.Equal(t, "metrics.json", cfg.Store.FileStoragePath, "FileStoragePath должен быть 'metrics.json' по умолчанию")
 	assert.Equal(t, true, cfg.Store.Restore, "Restore должен быть 'true' по умолчанию")
+	assert.Equal(t, "", cfg.SignKey, "SignKey должен быть пустой строкой по умолчанию")
 }
 
 func TestValidateRunAddr(t *testing.T) {
@@ -202,6 +203,21 @@ func TestParseFlags(t *testing.T) {
 			},
 		},
 		{
+			name:    "Key via flag (env not set)",
+			args:    []string{"cmd", "-k", "testKey"},
+			env:     nil,
+			wantErr: false,
+			expected: &Config{
+				RunAddr: "localhost:8080",
+				Store: StoreConfig{
+					StoreInterval:   300 * time.Second,
+					FileStoragePath: "metrics.json",
+					Restore:         true,
+				},
+				SignKey: "testKey",
+			},
+		},
+		{
 			name: "Env overrides flag for server address",
 			args: []string{"cmd", "-a", "flag-addr:8000"},
 			env: map[string]string{
@@ -301,6 +317,40 @@ func TestParseFlags(t *testing.T) {
 			},
 		},
 		{
+			name: "Env overrides flag for key",
+			args: []string{"cmd", "-k", "flagKeyTest"},
+			env: map[string]string{
+				"KEY": "envKeyTest",
+			},
+			wantErr: false,
+			expected: &Config{
+				RunAddr: "localhost:8080",
+				Store: StoreConfig{
+					StoreInterval:   300 * time.Second,
+					FileStoragePath: "metrics.json",
+					Restore:         true,
+				},
+				SignKey: "envKeyTest",
+			},
+		},
+		{
+			name: "Empty env value key ignored (fallback to flag)",
+			args: []string{"cmd", "-k", "flagKeyTest"},
+			env: map[string]string{
+				"KEY": "", // пустая строка — игнорируется
+			},
+			wantErr: false,
+			expected: &Config{
+				RunAddr: "localhost:8080",
+				Store: StoreConfig{
+					StoreInterval:   300 * time.Second,
+					FileStoragePath: "metrics.json",
+					Restore:         true,
+				},
+				SignKey: "flagKeyTest",
+			},
+		},
+		{
 			name: "Invalid env value for STORE_INTERVAL (fallback to flag)",
 			args: []string{"cmd", "-i", "10"},
 			env: map[string]string{
@@ -354,7 +404,7 @@ func TestParseFlags(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			originalEnv := make(map[string]*string)
-			for _, key := range []string{"ADDRESS", "STORE_INTERVAL", "FILE_STORAGE_PATH", "RESTORE", "DATABASE_DSN"} {
+			for _, key := range []string{"ADDRESS", "STORE_INTERVAL", "FILE_STORAGE_PATH", "RESTORE", "DATABASE_DSN", "KEY"} {
 				if val, ok := os.LookupEnv(key); ok {
 					originalEnv[key] = &val
 				} else {
