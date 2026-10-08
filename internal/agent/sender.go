@@ -10,18 +10,22 @@ import (
 	"github.com/strbnm/metrics/internal/compress"
 	models "github.com/strbnm/metrics/internal/model"
 	"github.com/strbnm/metrics/internal/retry"
+	"github.com/strbnm/metrics/internal/signer"
 
 	"github.com/go-resty/resty/v2"
 )
 
-// senderTimeout ограничивает время одного HTTP-запроса.
-const senderTimeout = 10 * time.Second
+const (
+	senderTimeout = 10 * time.Second
+	HashHeader    = "HashSHA256"
+)
 
 type Sender struct {
 	client *resty.Client
+	key    string
 }
 
-func NewSender(serverURL string) (*Sender, error) {
+func NewSender(serverURL, key string) (*Sender, error) {
 	if serverURL == "" {
 		return nil, fmt.Errorf("serverURL cannot be empty")
 	}
@@ -33,6 +37,7 @@ func NewSender(serverURL string) (*Sender, error) {
 
 	return &Sender{
 		client: client,
+		key:    key,
 	}, nil
 }
 
@@ -45,8 +50,6 @@ func (s *Sender) Send(ctx context.Context, metrics []models.Metrics) error {
 	}, nil, retry.IsNetError)
 }
 
-// post сериализует payload в JSON, сжимает gzip, отправляет на path
-// и проверяет, что сервер ответил 200 OK.
 func (s *Sender) post(ctx context.Context, path string, payload any) error {
 	data, err := json.Marshal(payload)
 	if err != nil {
@@ -58,13 +61,19 @@ func (s *Sender) post(ctx context.Context, path string, payload any) error {
 		return fmt.Errorf("failed to compress payload: %w", err)
 	}
 
-	resp, err := s.client.R().
+	req := s.client.R().
 		SetContext(ctx).
 		SetBody(compressed).
 		SetHeader("Content-Type", "application/json; charset=utf-8").
 		SetHeader("Accept-Encoding", "gzip").
-		SetHeader("Content-Encoding", "gzip").
-		Post(path)
+		SetHeader("Content-Encoding", "gzip")
+
+	if s.key != "" {
+		hash := signer.Sign(compressed, s.key)
+		req.SetHeader(HashHeader, hash)
+	}
+
+	resp, err := req.Post(path)
 	if err != nil {
 		return err
 	}

@@ -21,7 +21,7 @@ func main() {
 
 	collector := service.NewCollector(cfg.CollectorConfig.PollInterval, cfg.CollectorConfig.ReportInterval)
 
-	sender, err := agent.NewSender(serverURL)
+	sender, err := agent.NewSender(serverURL, cfg.ServerConfig.SignKey)
 	if err != nil {
 		log.Fatal(err)
 	}
