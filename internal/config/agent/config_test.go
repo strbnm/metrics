@@ -18,6 +18,7 @@ func TestNewAgentConfig(t *testing.T) {
 	assert.Equal(t, "localhost:8080", cfg.ServerConfig.ServerAddr, "ServerAddr должно быть 'localhost:8080'")
 	assert.Equal(t, 2*time.Second, cfg.CollectorConfig.PollInterval, "PollInterval должно быть 2s")
 	assert.Equal(t, 10*time.Second, cfg.CollectorConfig.ReportInterval, "ReportInterval должно быть 10s")
+	assert.Equal(t, "", cfg.ServerConfig.SignKey, "envSignKey должен быть пустой строкой")
 }
 
 func TestServerURL(t *testing.T) {
@@ -168,6 +169,23 @@ func TestParseFlags(t *testing.T) {
 			},
 		},
 		{
+			name:    "Key via flag (env not set)",
+			args:    []string{"cmd", "-k", "testKey"},
+			env:     nil,
+			wantErr: false,
+			expected: &Config{
+				ServerConfig: ServerConfig{
+					Schema:     "http",
+					ServerAddr: "localhost:8080",
+					SignKey:    "testKey",
+				},
+				CollectorConfig: CollectorConfig{
+					PollInterval:   2 * time.Second,
+					ReportInterval: 10 * time.Second,
+				},
+			},
+		},
+		{
 			name:    "Custom intervals via flags (env not set)",
 			args:    []string{"cmd", "-p", "5", "-r", "20"},
 			env:     nil,
@@ -194,6 +212,25 @@ func TestParseFlags(t *testing.T) {
 				ServerConfig: ServerConfig{
 					Schema:     "http",
 					ServerAddr: "env-addr:9000", // берётся из env
+				},
+				CollectorConfig: CollectorConfig{
+					PollInterval:   2 * time.Second,
+					ReportInterval: 10 * time.Second,
+				},
+			},
+		},
+		{
+			name: "Env overrides flag for key",
+			args: []string{"cmd", "-k", "flagKeyTest"},
+			env: map[string]string{
+				"KEY": "envKeyTest",
+			},
+			wantErr: false,
+			expected: &Config{
+				ServerConfig: ServerConfig{
+					Schema:     "http",
+					ServerAddr: "localhost:8080",
+					SignKey:    "envKeyTest", // берётся из env
 				},
 				CollectorConfig: CollectorConfig{
 					PollInterval:   2 * time.Second,
@@ -271,13 +308,32 @@ func TestParseFlags(t *testing.T) {
 				},
 			},
 		},
+		{
+			name: "Empty env value key ignored (fallback to flag)",
+			args: []string{"cmd", "-k", "flagKeyTest"},
+			env: map[string]string{
+				"KEY": "", // пустая строка — игнорируется
+			},
+			wantErr: false,
+			expected: &Config{
+				ServerConfig: ServerConfig{
+					Schema:     "http",
+					ServerAddr: "localhost:8080",
+					SignKey:    "flagKeyTest", // из флага
+				},
+				CollectorConfig: CollectorConfig{
+					PollInterval:   2 * time.Second,
+					ReportInterval: 10 * time.Second,
+				},
+			},
+		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 
 			originalEnv := make(map[string]*string)
-			for _, key := range []string{"ADDRESS", "POLL_INTERVAL", "REPORT_INTERVAL"} {
+			for _, key := range []string{"ADDRESS", "POLL_INTERVAL", "REPORT_INTERVAL", "KEY"} {
 				if val, ok := os.LookupEnv(key); ok {
 					originalEnv[key] = &val
 				} else {
@@ -325,6 +381,8 @@ func TestParseFlags(t *testing.T) {
 				"CollectorConfig.PollInterval должно совпадать с ожидаемым")
 			assert.Equal(t, tt.expected.CollectorConfig.ReportInterval, cfg.CollectorConfig.ReportInterval,
 				"CollectorConfig.ReportInterval должно совпадать с ожидаемым")
+			assert.Equal(t, tt.expected.ServerConfig.SignKey, cfg.ServerConfig.SignKey,
+				"ServerConfig.SignKey должно совпадать с ожидаемым")
 		})
 	}
 }
