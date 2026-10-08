@@ -17,6 +17,7 @@ type CollectorConfig struct {
 type ServerConfig struct {
 	Schema     string
 	ServerAddr string
+	SignKey    string
 }
 
 func (cfg *ServerConfig) ServerURL() string {
@@ -54,6 +55,8 @@ func ParseFlags() (*Config, error) {
 	reportInterval := flag.Int64("r", int64(cfg.CollectorConfig.ReportInterval/time.Second),
 		"time interval between reports in seconds")
 
+	flag.StringVar(&cfg.ServerConfig.SignKey, "k", cfg.ServerConfig.SignKey, "key for sign request data")
+
 	flag.Parse()
 
 	if envAddr, ok := os.LookupEnv("ADDRESS"); ok && envAddr != "" {
@@ -76,6 +79,10 @@ func ParseFlags() (*Config, error) {
 		} else {
 			reportInterval = &value
 		}
+	}
+
+	if envSignKey, ok := os.LookupEnv("KEY"); ok && envSignKey != "" {
+		cfg.ServerConfig.SignKey = strings.TrimSpace(envSignKey)
 	}
 
 	// Применяем и валидируем значения
