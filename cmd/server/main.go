@@ -153,8 +153,8 @@ func newStorage(
 func newRouter(h *handler.Handler, appLogger *zap.SugaredLogger, cfg *config.Config) *chi.Mux {
 	r := chi.NewRouter()
 	r.Use(middlewares.StripSlashes)
-	r.Use(middleware.GzipMiddleware)
 	r.Use(middleware.HashSign(cfg.SignKey))
+	r.Use(middleware.GzipMiddleware)
 	r.Use(middleware.WithLogging(appLogger))
 
 	r.Route("/", func(r chi.Router) {

@@ -44,23 +44,23 @@ func HashSign(key string) func(http.Handler) http.Handler {
 				return
 			}
 
-			// --- Проверка подписи запроса (хеш от сырого тела) ---
+			// Проверка подписи запроса (хеш от сырого тела) — только для запросов с телом
+			if r.Method != http.MethodGet {
+				body, err := io.ReadAll(r.Body)
+				if err != nil {
+					http.Error(w, "failed to read body", http.StatusBadRequest)
+					return
+				}
+				r.Body.Close()
 
-			body, err := io.ReadAll(r.Body)
-			if err != nil {
-				http.Error(w, "failed to read body", http.StatusBadRequest)
-				return
+				clientHash := r.Header.Get(HashHeader)
+				if clientHash == "" || !signer.Verify(body, key, clientHash) {
+					http.Error(w, "invalid hash signature", http.StatusBadRequest)
+					return
+				}
+
+				r.Body = io.NopCloser(bytes.NewReader(body))
 			}
-			r.Body.Close()
-
-			clientHash := r.Header.Get(HashHeader)
-			if clientHash == "" || !signer.Verify(body, key, clientHash) {
-				http.Error(w, "invalid hash signature", http.StatusBadRequest)
-				return
-			}
-
-			// Возвращаем сырое тело — GzipMiddleware распакует
-			r.Body = io.NopCloser(bytes.NewReader(body))
 
 			// --- Перехват ответа ---
 
