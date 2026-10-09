@@ -19,7 +19,7 @@ func main() {
 	}
 	serverURL := cfg.ServerConfig.ServerURL()
 
-	collector := service.NewCollector(cfg.CollectorConfig.PollInterval, cfg.CollectorConfig.ReportInterval)
+	collector := service.NewCollector(cfg.CollectorConfig.PollInterval, cfg.CollectorConfig.ReportInterval, cfg.CollectorConfig.RateLimit)
 
 	sender, err := agent.NewSender(serverURL, cfg.ServerConfig.SignKey)
 	if err != nil {
