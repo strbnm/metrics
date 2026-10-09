@@ -3,6 +3,8 @@ package service
 import (
 	"context"
 	"errors"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -15,173 +17,333 @@ import (
 func TestNewCollector(t *testing.T) {
 	pollInterval := 1 * time.Second
 	reportInterval := 5 * time.Second
+	rateLimit := 3
 
-	collector := NewCollector(pollInterval, reportInterval)
+	collector := NewCollector(pollInterval, reportInterval, rateLimit)
 
 	require.NotNil(t, collector, "NewCollector returned nil")
 	assert.Equal(t, pollInterval, collector.pollInterval, "pollInterval mismatch")
 	assert.Equal(t, reportInterval, collector.reportInterval, "reportInterval mismatch")
-	assert.Equal(t, int64(0), collector.pollCount, "initial pollCount should be 0")
+	assert.Equal(t, rateLimit, collector.rateLimit, "rateLimit mismatch")
+	require.NotNil(t, collector.sendQueue, "sendQueue should be initialized")
+	assert.Equal(t, 0, len(collector.sendQueue), "sendQueue should be empty on creation")
 }
 
-func TestUint64ToFloat64(t *testing.T) {
-	testCases := []struct {
-		input    uint64
-		expected float64
-	}{
-		{0, 0},
-		{1, 1},
-		{42, 42},
-		{18446744073709551615, 18446744073709551615},
-	}
+func TestPtr(t *testing.T) {
+	v := 42
+	p := ptr(v)
+	require.NotNil(t, p, "ptr returned nil")
+	assert.Equal(t, 42, *p, "ptr should store the value")
 
-	for _, tc := range testCases {
-		result := uint64ToFloat64(tc.input)
-		require.NotNil(t, result, "uint64ToFloat64(%d) returned nil", tc.input)
-		assert.InDelta(t, tc.expected, *result, 0.0001, "uint64ToFloat64(%d) = %f, want %f", tc.input, *result, tc.expected)
-	}
+	assert.Equal(t, 3.14, *ptr(3.14), "ptr should work for float64")
+	assert.Equal(t, "test", *ptr("test"), "ptr should work for string")
 }
 
-func TestUint32ToFloat64(t *testing.T) {
-	testCases := []struct {
-		input    uint32
-		expected float64
-	}{
-		{0, 0},
-		{1, 1},
-		{42, 42},
-		{4294967295, 4294967295},
-	}
-
-	for _, tc := range testCases {
-		result := uint32ToFloat64(tc.input)
-		require.NotNil(t, result, "uint32ToFloat64(%d) returned nil", tc.input)
-		assert.InDelta(t, tc.expected, *result, 0.0001, "uint32ToFloat64(%d) = %f, want %f", tc.input, *result, tc.expected)
-	}
-}
-
-func TestCollector_collectOnce(t *testing.T) {
-	collector := NewCollector(1*time.Second, 5*time.Second)
-
-	// Первый сбор
-	collector.collectOnce()
-	firstMetrics := collector.GetLastMetrics()
-
-	require.NotEmpty(t, firstMetrics, "collectOnce produced no metrics")
-	assert.Equal(t, int64(1), collector.pollCount, "pollCount should be 1 after first collectOnce")
-
-	var pollCountMetric *models.Metrics
-	for _, m := range firstMetrics {
-		if m.ID == "PollCount" {
-			pollCountMetric = &m
-			break
-		}
-	}
-
-	require.NotNil(t, pollCountMetric, "PollCount metric not found in collected metrics")
-	require.NotNil(t, pollCountMetric.Delta, "PollCount Delta should not be nil")
-	assert.Equal(t, int64(1), *pollCountMetric.Delta, "PollCount metric should have value 1")
-
-	// Второй сбор
-	collector.collectOnce()
-	secondMetrics := collector.GetLastMetrics()
-
-	assert.Equal(t, int64(2), collector.pollCount, "pollCount should be 2 after second collectOnce")
-
-	for _, m := range secondMetrics {
-		if m.ID == "PollCount" {
-			require.NotNil(t, m.Delta, "PollCount Delta should not be nil")
-			assert.Equal(t, int64(2), *m.Delta, "PollCount metric should have value 2")
-		}
-	}
-
-	var randomValueMetric *models.Metrics
-	for _, m := range secondMetrics {
-		if m.ID == "RandomValue" {
-			randomValueMetric = &m
-			break
-		}
-	}
-
-	require.NotNil(t, randomValueMetric, "RandomValue metric not found")
-	require.NotNil(t, randomValueMetric.Value, "RandomValue Value should not be nil")
-	value := *randomValueMetric.Value
-	assert.GreaterOrEqual(t, value, 0.0, "RandomValue should be >= 0")
-	assert.Less(t, value, 1.0, "RandomValue should be < 1")
-}
-
-func TestCollector_GetLastMetrics(t *testing.T) {
-	collector := NewCollector(1*time.Second, 5*time.Second)
-
-	// Изначально метрик нет
-	metrics := collector.GetLastMetrics()
-	assert.Nil(t, metrics, "Expected no metrics before collectOnce")
-
-	// После сбора должны быть метрики
-	collector.collectOnce()
-	metrics = collector.GetLastMetrics()
-	require.NotEmpty(t, metrics, "GetLastMetrics returned empty slice after collectOnce")
-
-	// Проверяем наличие ключевых метрик
-	requiredMetrics := map[string]bool{
-		"Alloc":       false,
-		"HeapAlloc":   false,
-		"PollCount":   false,
-		"RandomValue": false,
-	}
-
+func findMetric(t *testing.T, metrics []models.Metrics, id string) models.Metrics {
+	t.Helper()
 	for _, m := range metrics {
-		if _, exists := requiredMetrics[m.ID]; exists {
-			requiredMetrics[m.ID] = true
+		if m.ID == id {
+			return m
 		}
 	}
+	t.Fatalf("metric %q not found", id)
+	return models.Metrics{}
+}
 
-	for metric, found := range requiredMetrics {
-		assert.True(t, found, "Required metric %s not found in collected metrics", metric)
+func TestCollectRuntimeMetrics(t *testing.T) {
+	t.Run("первый опрос включает PollCount = 1", func(t *testing.T) {
+		metrics := collectRuntimeMetrics(1, 0)
+		require.NotEmpty(t, metrics, "collectRuntimeMetrics produced no metrics")
+
+		pollCountMetric := findMetric(t, metrics, "PollCount")
+		require.NotNil(t, pollCountMetric.Delta, "PollCount Delta should not be nil")
+		assert.Equal(t, models.Counter, pollCountMetric.MType, "PollCount should be a counter")
+		assert.Equal(t, int64(1), *pollCountMetric.Delta, "PollCount metric should have value 1")
+
+		randomValueMetric := findMetric(t, metrics, "RandomValue")
+		require.NotNil(t, randomValueMetric.Value, "RandomValue Value should not be nil")
+		value := *randomValueMetric.Value
+		assert.GreaterOrEqual(t, value, 0.0, "RandomValue should be >= 0")
+		assert.Less(t, value, 1.0, "RandomValue should be < 1")
+
+		// Ключевые gauge-метрики из runtime.MemStats
+		for _, id := range []string{"Alloc", "HeapAlloc", "Sys", "TotalAlloc"} {
+			m := findMetric(t, metrics, id)
+			assert.Equal(t, models.Gauge, m.MType, "%s should be a gauge", id)
+			require.NotNil(t, m.Value, "%s Value should not be nil", id)
+			assert.GreaterOrEqual(t, *m.Value, 0.0, "%s should be >= 0", id)
+		}
+	})
+
+	t.Run("дельта PollCount считается как разность с lastSentPollCount", func(t *testing.T) {
+		metrics := collectRuntimeMetrics(3, 1)
+
+		pollCountMetric := findMetric(t, metrics, "PollCount")
+		require.NotNil(t, pollCountMetric.Delta)
+		assert.Equal(t, int64(2), *pollCountMetric.Delta,
+			"дельта PollCount должна быть pollCount - lastSentPollCount")
+	})
+
+	t.Run("при нулевой дельте PollCount не добавляется", func(t *testing.T) {
+		metrics := collectRuntimeMetrics(2, 2)
+		require.NotEmpty(t, metrics)
+
+		for _, m := range metrics {
+			assert.NotEqual(t, "PollCount", m.ID,
+				"PollCount не должен попадать в снапшот при нулевой дельте")
+		}
+	})
+}
+
+func TestCollectSystemMetrics(t *testing.T) {
+	metrics := collectSystemMetrics()
+	require.NotEmpty(t, metrics, "collectSystemMetrics should return memory/CPU metrics")
+
+	ids := make(map[string]bool)
+	for _, m := range metrics {
+		assert.Equal(t, models.Gauge, m.MType, "system metric %s should be a gauge", m.ID)
+		require.NotNil(t, m.Value, "system metric %s should have a value", m.ID)
+		assert.GreaterOrEqual(t, *m.Value, 0.0, "system metric %s should be >= 0", m.ID)
+		ids[m.ID] = true
+	}
+
+	assert.True(t, ids["TotalMemory"], "TotalMemory metric not found")
+	assert.True(t, ids["FreeMemory"], "FreeMemory metric not found")
+
+	hasCPU := false
+	for id := range ids {
+		if len(id) >= len("CPUUtilization") && id[:len("CPUUtilization")] == "CPUUtilization" {
+			hasCPU = true
+			break
+		}
+	}
+	assert.True(t, hasCPU, "CPU utilization metrics not found")
+}
+
+func TestCollectorRuntimeCollector(t *testing.T) {
+	collector := NewCollector(time.Second, time.Second, 1)
+
+	pollTicker := make(chan time.Time)
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		collector.runtimeCollector(ctx, pollTicker)
+	}()
+
+	// Два тика опроса
+	pollTicker <- time.Now()
+	pollTicker <- time.Now()
+	cancel()
+
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("runtimeCollector did not stop after context cancellation")
+	}
+
+	collector.mu.RLock()
+	defer collector.mu.RUnlock()
+	require.NotEmpty(t, collector.lastRuntime, "runtimeCollector should store collected metrics")
+
+	pollCountMetric := findMetric(t, collector.lastRuntime, "PollCount")
+	require.NotNil(t, pollCountMetric.Delta)
+	assert.Equal(t, int64(2), *pollCountMetric.Delta,
+		"после двух опросов дельта PollCount должна быть 2")
+}
+
+func TestCollectorSystemCollector(t *testing.T) {
+	collector := NewCollector(time.Second, time.Second, 1)
+
+	pollTicker := make(chan time.Time)
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		collector.systemCollector(ctx, pollTicker)
+	}()
+
+	pollTicker <- time.Now()
+	cancel()
+
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("systemCollector did not stop after context cancellation")
+	}
+
+	collector.mu.RLock()
+	defer collector.mu.RUnlock()
+	require.NotEmpty(t, collector.lastSystem, "systemCollector should store collected metrics")
+
+	for _, m := range collector.lastSystem {
+		assert.Equal(t, models.Gauge, m.MType, "system metric %s should be a gauge", m.ID)
 	}
 }
 
-func TestCollector_Start_SingleIteration(t *testing.T) {
+func TestCollectorWorker(t *testing.T) {
+	t.Run("доставляет пакеты из очереди и завершается по её закрытию", func(t *testing.T) {
+		collector := NewCollector(time.Second, time.Second, 1)
+
+		var mu sync.Mutex
+		received := make([][]models.Metrics, 0, 2)
+
+		// worker вызывает wg.Done() при выходе: повторяем контракт Start
+		collector.wg.Add(1)
+		done := make(chan struct{})
+		go func() {
+			defer close(done)
+			collector.worker(t.Context(), func(ctx context.Context, metrics []models.Metrics) error {
+				mu.Lock()
+				defer mu.Unlock()
+				received = append(received, metrics)
+				return nil
+			})
+		}()
+
+		collector.sendQueue <- []models.Metrics{{ID: "Batch1", MType: models.Gauge, Value: ptr(1.0)}}
+		collector.sendQueue <- []models.Metrics{{ID: "Batch2", MType: models.Gauge, Value: ptr(2.0)}}
+		close(collector.sendQueue)
+
+		select {
+		case <-done:
+		case <-time.After(time.Second):
+			t.Fatal("worker did not finish after queue close")
+		}
+
+		mu.Lock()
+		defer mu.Unlock()
+		require.Len(t, received, 2, "worker should deliver both batches")
+		assert.Equal(t, "Batch1", received[0][0].ID, "batches should be delivered in order")
+		assert.Equal(t, "Batch2", received[1][0].ID)
+	})
+
+	t.Run("ошибка отправки не останавливает воркер", func(t *testing.T) {
+		collector := NewCollector(time.Second, time.Second, 1)
+
+		var calls, delivered atomic.Int32
+
+		collector.wg.Add(1)
+		done := make(chan struct{})
+		go func() {
+			defer close(done)
+			collector.worker(t.Context(), func(ctx context.Context, metrics []models.Metrics) error {
+				if calls.Add(1) == 1 {
+					return errors.New("send failed")
+				}
+				delivered.Add(1)
+				return nil
+			})
+		}()
+
+		collector.sendQueue <- []models.Metrics{{ID: "Fail", MType: models.Gauge, Value: ptr(1.0)}}
+		collector.sendQueue <- []models.Metrics{{ID: "Ok", MType: models.Gauge, Value: ptr(2.0)}}
+		close(collector.sendQueue)
+
+		select {
+		case <-done:
+		case <-time.After(time.Second):
+			t.Fatal("worker did not finish after queue close")
+		}
+
+		assert.Equal(t, int32(2), calls.Load(), "worker should process both batches")
+		assert.Equal(t, int32(1), delivered.Load(),
+			"ошибка первого пакета не должна мешать доставке следующего")
+	})
+
+	t.Run("останавливается по отмене контекста", func(t *testing.T) {
+		collector := NewCollector(time.Second, time.Second, 1)
+
+		ctx, cancel := context.WithCancel(t.Context())
+
+		collector.wg.Add(1)
+		done := make(chan struct{})
+		go func() {
+			defer close(done)
+			collector.worker(ctx, func(ctx context.Context, metrics []models.Metrics) error {
+				return nil
+			})
+		}()
+
+		cancel()
+
+		select {
+		case <-done:
+		case <-time.After(time.Second):
+			t.Fatal("worker did not stop after context cancellation")
+		}
+	})
+}
+
+func TestCollector_Start(t *testing.T) {
 	pollInterval := 10 * time.Millisecond
-	reportInterval := 20 * time.Millisecond
+	reportInterval := 50 * time.Millisecond
 
-	collector := NewCollector(pollInterval, reportInterval)
+	collector := NewCollector(pollInterval, reportInterval, 2)
 
-	sentMetrics := make([][]models.Metrics, 0)
+	var mu sync.Mutex
+	runtimeBatches := make([][]models.Metrics, 0)
+	systemBatches := make([][]models.Metrics, 0)
+
 	sendFunc := func(ctx context.Context, metrics []models.Metrics) error {
-		sentMetrics = append(sentMetrics, metrics)
+		mu.Lock()
+		defer mu.Unlock()
+		// runtime-пакет содержит counter PollCount, system-пакет — нет
+		isRuntime := false
+		for _, m := range metrics {
+			if m.ID == "PollCount" {
+				isRuntime = true
+				break
+			}
+		}
+		if isRuntime {
+			runtimeBatches = append(runtimeBatches, metrics)
+		} else {
+			systemBatches = append(systemBatches, metrics)
+		}
 		return nil
 	}
 
-	// reportOnce отправляет последний снимок метрик
-	collector.collectOnce()
-	require.NoError(t, collector.reportOnce(t.Context(), sendFunc))
+	ctx, cancel := context.WithCancel(t.Context())
+	startDone := make(chan error, 1)
+	go func() {
+		startDone <- collector.Start(ctx, sendFunc)
+	}()
 
-	// Проверяем, что метрики были отправлены
-	require.Len(t, sentMetrics, 1, "Expected exactly 1 metric send")
-	assert.NotEmpty(t, sentMetrics[0], "Sent metrics should not be empty")
-	assert.Equal(t, collector.pollCount, collector.lastSentPollCount,
-		"после успешной отправки lastSentPollCount должен догнать pollCount")
-}
+	// Даём коллектору поработать несколько отчётных циклов
+	time.Sleep(300 * time.Millisecond)
+	cancel()
 
-func TestCollector_reportOnce_FailedSendKeepsLastSentPollCount(t *testing.T) {
-	collector := NewCollector(10*time.Millisecond, 20*time.Millisecond)
+	select {
+	case err := <-startDone:
+		require.NoError(t, err, "Start should return nil after context cancellation")
+	case <-time.After(2 * time.Second):
+		t.Fatal("Start did not return after context cancellation")
+	}
 
-	collector.collectOnce()
-	require.Error(t, collector.reportOnce(t.Context(), func(ctx context.Context, metrics []models.Metrics) error {
-		return errors.New("send failed")
-	}))
+	mu.Lock()
+	defer mu.Unlock()
 
-	assert.Equal(t, int64(0), collector.lastSentPollCount,
-		"неудачная отправка не должна обновлять lastSentPollCount")
+	require.NotEmpty(t, runtimeBatches, "Start should send runtime metrics batches")
+	require.NotEmpty(t, systemBatches, "Start should send system metrics batches")
 
-	// следующий опрос включает неучтённую дельту
-	collector.collectOnce()
-	for _, m := range collector.GetLastMetrics() {
-		if m.ID == "PollCount" {
-			require.NotNil(t, m.Delta)
-			assert.Equal(t, collector.pollCount, *m.Delta,
-				"после неудачной отправки дельта PollCount накапливается")
+	for i, batch := range runtimeBatches {
+		pollCountMetric := findMetric(t, batch, "PollCount")
+		require.NotNil(t, pollCountMetric.Delta, "PollCount Delta should not be nil")
+		assert.Greater(t, *pollCountMetric.Delta, int64(0),
+			"runtime batch %d: PollCount should be positive", i)
+		findMetric(t, batch, "Alloc")
+		findMetric(t, batch, "RandomValue")
+	}
+
+	for i, batch := range systemBatches {
+		require.NotEmpty(t, batch, "system batch %d should not be empty", i)
+		for _, m := range batch {
+			assert.Equal(t, models.Gauge, m.MType, "system metric %s should be a gauge", m.ID)
 		}
 	}
 }
