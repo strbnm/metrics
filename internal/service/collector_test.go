@@ -347,3 +347,155 @@ func TestCollector_Start(t *testing.T) {
 		}
 	}
 }
+
+// pollBatch собирает runtime-батч с кумулятивным значением PollCount —
+// в том виде, в каком его ставит в очередь Start
+func pollBatch(p int64) []models.Metrics {
+	return []models.Metrics{
+		{ID: "Alloc", MType: models.Gauge, Value: ptr(1.0)},
+		{ID: "PollCount", MType: models.Counter, Delta: ptr(p)},
+	}
+}
+
+func waitFor(t *testing.T, cond func() bool) {
+	t.Helper()
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		if cond() {
+			return
+		}
+		time.Sleep(time.Millisecond)
+	}
+	t.Fatal("condition not met within 2s timeout")
+}
+
+func TestCollectorWorker_SelfHealAfterFailedSend(t *testing.T) {
+	collector := NewCollector(time.Second, time.Second, 1)
+
+	// worker вызывает wg.Done() при выходе: повторяем контракт Start
+	collector.wg.Add(1)
+
+	var calls atomic.Int32
+	sentDeltas := make(chan int64, 4)
+	sendStarted := make(chan struct{}, 4)
+	release := make(chan struct{})
+
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+
+	go func() {
+		collector.worker(ctx, func(ctx context.Context, metrics []models.Metrics) error {
+			for _, m := range metrics {
+				if m.ID == "PollCount" {
+					sentDeltas <- *m.Delta
+				}
+			}
+			sendStarted <- struct{}{}
+			<-release
+			if calls.Add(1) == 1 {
+				return errors.New("permanent send failure")
+			}
+			return nil
+		})
+	}()
+
+	// «Отчёт» №1: повторяем контракт Start — захват гейта, затем постановка
+	// батча с кумулятивным счётчиком
+	require.True(t, collector.runtimeInFlight.CompareAndSwap(0, 1),
+		"gate should be free before the first dispatch")
+	collector.sendQueue <- pollBatch(3)
+
+	<-sendStarted
+	close(release) // первая отправка завершится ошибкой
+
+	// Воркер обязан освободить гейт и НЕ подтвердить счётчик
+	waitFor(t, func() bool { return collector.runtimeInFlight.Load() == 0 })
+	assert.Equal(t, int64(0), collector.lastSentPollCount.Load(),
+		"неудачная отправка не должна подтверждать lastSentPollCount")
+	assert.Equal(t, int64(3), <-sentDeltas,
+		"первый батч должен уйти с дельтой 3 (кумулятивный 3 минус lastSent 0)")
+
+	// «Отчёт» №2: гейт снова свободен, интервал должен покрыть
+	// и опросы провалившегося батча (самозалечивание)
+	require.True(t, collector.runtimeInFlight.CompareAndSwap(0, 1),
+		"worker должен освободить гейт после неудачной отправки")
+	collector.sendQueue <- pollBatch(7)
+
+	<-sendStarted
+	assert.Equal(t, int64(7), <-sentDeltas,
+		"после провала следующая дельта должна перекрыть весь интервал (7 - 0)")
+
+	waitFor(t, func() bool { return collector.lastSentPollCount.Load() == 7 })
+}
+
+func TestCollector_Start_GateSkipsReportsWhileRuntimeBatchInFlight(t *testing.T) {
+	collector := NewCollector(10*time.Millisecond, 10*time.Millisecond, 2)
+
+	var runtimeSends atomic.Int32
+	deltas := make(chan int64, 8)
+	release := make(chan struct{})
+
+	sendFunc := func(ctx context.Context, metrics []models.Metrics) error {
+		if p, ok := pollCountOf(metrics); ok {
+			deltas <- p // воркер уже вырезал дельту из кумулятивного значения
+			runtimeSends.Add(1)
+			if runtimeSends.Load() == 1 {
+				<-release // первая runtime-отправка «зависает»
+			}
+		}
+		// system-батчи уходят свободно
+		return nil
+	}
+
+	ctx, cancel := context.WithCancel(t.Context())
+	startDone := make(chan error, 1)
+	go func() {
+		startDone <- collector.Start(ctx, sendFunc)
+	}()
+
+	var delta1 int64
+	select {
+	case delta1 = <-deltas:
+	case <-time.After(2 * time.Second):
+		t.Fatal("первая runtime-отправка не состоялась")
+	}
+
+	// Пока первая отправка висит, отчётные тики (каждые 10мс) не должны
+	// порождать новые runtime-батчи
+	time.Sleep(150 * time.Millisecond)
+	assert.Equal(t, int32(1), runtimeSends.Load(),
+		"гейт должен пропускать только один runtime-батч за раз")
+
+	close(release)
+
+	var delta2 int64
+	select {
+	case delta2 = <-deltas:
+	case <-time.After(2 * time.Second):
+		t.Fatal("после разблокировки следующий runtime-батч не ушёл")
+	}
+	assert.Greater(t, delta2, delta1,
+		"дельта после блокировки должна покрыть опросы, накопленные за время ожидания")
+
+	cancel()
+	select {
+	case err := <-startDone:
+		require.NoError(t, err, "Start should return nil after context cancellation")
+	case <-time.After(2 * time.Second):
+		t.Fatal("Start did not return after context cancellation")
+	}
+}
+
+func TestConfirmPollCount(t *testing.T) {
+	var field atomic.Int64
+
+	confirmPollCount(&field, 5)
+	assert.Equal(t, int64(5), field.Load())
+
+	confirmPollCount(&field, 3)
+	assert.Equal(t, int64(5), field.Load(),
+		"подтверждение меньшим значением не должно откатывать счётчик")
+
+	confirmPollCount(&field, 7)
+	assert.Equal(t, int64(7), field.Load())
+}
