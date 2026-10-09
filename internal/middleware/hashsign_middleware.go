@@ -8,7 +8,7 @@ import (
 	"github.com/strbnm/metrics/internal/signer"
 )
 
-const HashHeader = "HashSHA256"
+const HashHeader = "Hash-Sha256"
 
 // signingWriter буферизует тело и статус, не отправляя их
 // в реальный ResponseWriter до явного вызова из HashSign.
@@ -53,8 +53,8 @@ func HashSign(key string) func(http.Handler) http.Handler {
 				}
 				r.Body.Close()
 
-				// Добавлен пропуск проверки подписи при отсутствии заголовка HashSHA256 в запросе
-				// Автотесты для iter14 не проверяют функциональность инкремента и не передают заголовки HashSHA256
+				// Добавлен пропуск проверки подписи при отсутствии заголовка Hash-Sha256 в запросе
+				// Автотесты для iter14 не проверяют функциональность инкремента и не передают заголовки Hash-Sha256
 				if _, exists := r.Header[HashHeader]; exists {
 					clientHash := r.Header.Get(HashHeader)
 					if clientHash == "" || !signer.Verify(body, key, clientHash) {

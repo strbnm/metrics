@@ -17,7 +17,7 @@ import (
 
 const (
 	senderTimeout = 10 * time.Second
-	HashHeader    = "HashSHA256"
+	HashHeader    = "Hash-Sha256"
 )
 
 type Sender struct {

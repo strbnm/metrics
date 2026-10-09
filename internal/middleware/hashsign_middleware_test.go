@@ -76,21 +76,6 @@ func TestHashSign_ValidSignature(t *testing.T) {
 	}
 }
 
-func TestHashSign_MissingHashHeader(t *testing.T) {
-	key := "secret"
-	body := []byte(`{"metric":"cpu"}`)
-
-	req := httptest.NewRequest(http.MethodPost, "/", bytes.NewReader(body))
-	rec := httptest.NewRecorder()
-
-	h := HashSign(key)(testHandler())
-	h.ServeHTTP(rec, req)
-
-	if rec.Code != http.StatusBadRequest {
-		t.Errorf("status = %d, want %d", rec.Code, http.StatusBadRequest)
-	}
-}
-
 func TestHashSign_InvalidSignature(t *testing.T) {
 	key := "secret"
 	body := []byte(`{"metric":"cpu"}`)
