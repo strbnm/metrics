@@ -3,8 +3,6 @@ package service
 import (
 	"context"
 	"log"
-	"math/rand/v2"
-	"runtime"
 	"sync"
 	"time"
 
@@ -12,101 +10,89 @@ import (
 )
 
 type Collector struct {
+	rateLimit      int
 	pollInterval   time.Duration
 	reportInterval time.Duration
 
-	mu                sync.RWMutex
-	pollCount         int64
-	lastSentPollCount int64
-	lastMetrics       []models.Metrics
+	lastRuntime []models.Metrics
+	lastSystem  []models.Metrics
+
+	sendQueue chan []models.Metrics
+	mu        sync.RWMutex
+	wg        sync.WaitGroup
 }
 
-func NewCollector(pollInterval, reportInterval time.Duration) *Collector {
-	return &Collector{
+func NewCollector(pollInterval, reportInterval time.Duration, rateLimit int) *Collector {
+	c := &Collector{
 		pollInterval:   pollInterval,
 		reportInterval: reportInterval,
+		rateLimit:      rateLimit,
+		sendQueue:      make(chan []models.Metrics, 100), // буфер очереди
+	}
+	return c
+}
+
+// runtimeCollector — отдельная горутина: собирает runtime-метрики и сохраняет локально
+func (c *Collector) runtimeCollector(ctx context.Context, pollTicker <-chan time.Time) {
+	var pollCount, lastSentPollCount int64
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-pollTicker:
+			pollCount++
+			rtMetrics := collectRuntimeMetrics(pollCount, lastSentPollCount)
+
+			c.mu.Lock()
+			c.lastRuntime = rtMetrics
+			c.mu.Unlock()
+		}
 	}
 }
 
-// ptr возвращает указатель на значение.
-func ptr[T any](v T) *T {
-	return &v
-}
+// systemCollector — отдельная горутина: собирает system-метрики и сохраняет локально
+func (c *Collector) systemCollector(ctx context.Context, pollTicker <-chan time.Time) {
 
-func uint64ToFloat64(value uint64) *float64 {
-	return ptr(float64(value))
-}
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-pollTicker:
+			sysMetrics := collectSystemMetrics()
 
-func uint32ToFloat64(value uint32) *float64 {
-	return ptr(float64(value))
-}
-
-// collectRuntimeMetrics собирает gauge-метрики из runtime.MemStats
-// и случайное значение RandomValue. Не зависит от состояния коллектора.
-func collectRuntimeMetrics() []models.Metrics {
-	var m runtime.MemStats
-	runtime.ReadMemStats(&m)
-
-	return []models.Metrics{
-		{ID: "Alloc", MType: models.Gauge, Value: uint64ToFloat64(m.Alloc)},
-		{ID: "BuckHashSys", MType: models.Gauge, Value: uint64ToFloat64(m.BuckHashSys)},
-		{ID: "Frees", MType: models.Gauge, Value: uint64ToFloat64(m.Frees)},
-		{ID: "GCCPUFraction", MType: models.Gauge, Value: &m.GCCPUFraction},
-		{ID: "GCSys", MType: models.Gauge, Value: uint64ToFloat64(m.GCSys)},
-		{ID: "HeapAlloc", MType: models.Gauge, Value: uint64ToFloat64(m.HeapAlloc)},
-		{ID: "HeapIdle", MType: models.Gauge, Value: uint64ToFloat64(m.HeapIdle)},
-		{ID: "HeapInuse", MType: models.Gauge, Value: uint64ToFloat64(m.HeapInuse)},
-		{ID: "HeapObjects", MType: models.Gauge, Value: uint64ToFloat64(m.HeapObjects)},
-		{ID: "HeapReleased", MType: models.Gauge, Value: uint64ToFloat64(m.HeapReleased)},
-		{ID: "HeapSys", MType: models.Gauge, Value: uint64ToFloat64(m.HeapSys)},
-		{ID: "LastGC", MType: models.Gauge, Value: uint64ToFloat64(m.LastGC)},
-		{ID: "Lookups", MType: models.Gauge, Value: uint64ToFloat64(m.Lookups)},
-		{ID: "MCacheInuse", MType: models.Gauge, Value: uint64ToFloat64(m.MCacheInuse)},
-		{ID: "MCacheSys", MType: models.Gauge, Value: uint64ToFloat64(m.MCacheSys)},
-		{ID: "MSpanInuse", MType: models.Gauge, Value: uint64ToFloat64(m.MSpanInuse)},
-		{ID: "MSpanSys", MType: models.Gauge, Value: uint64ToFloat64(m.MSpanSys)},
-		{ID: "Mallocs", MType: models.Gauge, Value: uint64ToFloat64(m.Mallocs)},
-		{ID: "NextGC", MType: models.Gauge, Value: uint64ToFloat64(m.NextGC)},
-		{ID: "NumForcedGC", MType: models.Gauge, Value: uint32ToFloat64(m.NumForcedGC)},
-		{ID: "NumGC", MType: models.Gauge, Value: uint32ToFloat64(m.NumGC)},
-		{ID: "OtherSys", MType: models.Gauge, Value: uint64ToFloat64(m.OtherSys)},
-		{ID: "PauseTotalNs", MType: models.Gauge, Value: uint64ToFloat64(m.PauseTotalNs)},
-		{ID: "StackInuse", MType: models.Gauge, Value: uint64ToFloat64(m.StackInuse)},
-		{ID: "StackSys", MType: models.Gauge, Value: uint64ToFloat64(m.StackSys)},
-		{ID: "Sys", MType: models.Gauge, Value: uint64ToFloat64(m.Sys)},
-		{ID: "TotalAlloc", MType: models.Gauge, Value: uint64ToFloat64(m.TotalAlloc)},
-		// Дополнительные метрики
-		{ID: "RandomValue", MType: models.Gauge, Value: ptr(rand.Float64())},
+			c.mu.Lock()
+			c.lastSystem = sysMetrics
+			c.mu.Unlock()
+		}
 	}
 }
 
-func (c *Collector) collectOnce() {
-	c.pollCount++
-
-	metrics := collectRuntimeMetrics()
-
-	delta := c.pollCount - c.lastSentPollCount
-	metrics = append(metrics,
-		models.Metrics{ID: "PollCount", MType: models.Counter, Delta: &delta},
-	)
-
-	c.setMetrics(metrics)
+// worker — воркер из пула: забирает пакеты из очереди и вызывает sendFunc
+func (c *Collector) worker(ctx context.Context, sendFunc func(ctx context.Context, metrics []models.Metrics) error) {
+	defer c.wg.Done()
+	for {
+		select {
+		case metrics, ok := <-c.sendQueue:
+			if !ok {
+				return
+			}
+			err := sendFunc(ctx, metrics)
+			if err != nil {
+				log.Printf("Failed to send metrics batch: %v", err)
+			}
+		case <-ctx.Done():
+			return
+		}
+	}
 }
 
-func (c *Collector) setMetrics(metrics []models.Metrics) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	c.lastMetrics = metrics
-}
-
-func (c *Collector) GetLastMetrics() []models.Metrics {
-	c.mu.RLock()
-	defer c.mu.RUnlock()
-	return c.lastMetrics
-}
-
-func (c *Collector) Start(ctx context.Context, sendFunc func(ctx context.Context, metrics []models.Metrics) error) {
-	c.collectOnce()
+func (c *Collector) Start(ctx context.Context, sendFunc func(ctx context.Context, metrics []models.Metrics) error) error {
+	// Инициализируем пул воркеров: ровно rateLimit одновременных вызовов sendFunc
+	for w := 0; w < c.rateLimit; w++ {
+		c.wg.Add(1)
+		go c.worker(ctx, sendFunc)
+	}
 
 	pollTicker := time.NewTicker(c.pollInterval)
 	defer pollTicker.Stop()
@@ -114,26 +100,38 @@ func (c *Collector) Start(ctx context.Context, sendFunc func(ctx context.Context
 	reportTicker := time.NewTicker(c.reportInterval)
 	defer reportTicker.Stop()
 
+	// Горутина сбора runtime-метрик (без отправки)
+	go c.runtimeCollector(ctx, pollTicker.C)
+
+	// Горутина сбора system-метрик (без отправки)
+	go c.systemCollector(ctx, pollTicker.C)
+
 	for {
 		select {
 		case <-ctx.Done():
-			return
-		case <-pollTicker.C:
-			c.collectOnce()
+			close(c.sendQueue)
+			c.wg.Wait()
+			return nil
 		case <-reportTicker.C:
-			c.reportOnce(ctx, sendFunc)
+			// Снимаем снапшоты под одним RLock
+			c.mu.RLock()
+			rtSnapshot := append([]models.Metrics(nil), c.lastRuntime...)
+			sysSnapshot := append([]models.Metrics(nil), c.lastSystem...)
+			c.mu.RUnlock()
+
+			// Отправляем runtime-пакет отдельным сообщением в очередь
+			select {
+			case c.sendQueue <- rtSnapshot:
+			case <-ctx.Done():
+				return nil
+			}
+
+			// Отправляем system-пакет отдельным сообщением в очередь
+			select {
+			case c.sendQueue <- sysSnapshot:
+			case <-ctx.Done():
+				return nil
+			}
 		}
 	}
-}
-
-// reportOnce отправляет последний снимок метрик; счётчик отправленных
-// опросов увеличивается только после успешной отправки.
-func (c *Collector) reportOnce(ctx context.Context, sendFunc func(ctx context.Context, metrics []models.Metrics) error) error {
-	metrics := c.GetLastMetrics()
-	if err := sendFunc(ctx, metrics); err != nil {
-		log.Printf("Failed to send metrics: %v", err)
-		return err
-	}
-	c.lastSentPollCount = c.pollCount
-	return nil
 }
