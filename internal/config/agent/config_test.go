@@ -186,6 +186,23 @@ func TestParseFlags(t *testing.T) {
 			},
 		},
 		{
+			name:    "Rate Limit via flag (env not set)",
+			args:    []string{"cmd", "-l", "10"},
+			env:     nil,
+			wantErr: false,
+			expected: &Config{
+				ServerConfig: ServerConfig{
+					Schema:     "http",
+					ServerAddr: "localhost:8080",
+				},
+				CollectorConfig: CollectorConfig{
+					PollInterval:   2 * time.Second,
+					ReportInterval: 10 * time.Second,
+					RateLimit:      10,
+				},
+			},
+		},
+		{
 			name:    "Custom intervals via flags (env not set)",
 			args:    []string{"cmd", "-p", "5", "-r", "20"},
 			env:     nil,
@@ -239,6 +256,25 @@ func TestParseFlags(t *testing.T) {
 			},
 		},
 		{
+			name: "Env overrides flag for rate limit",
+			args: []string{"cmd", "-l", "10"},
+			env: map[string]string{
+				"RATE_LIMIT": "1",
+			},
+			wantErr: false,
+			expected: &Config{
+				ServerConfig: ServerConfig{
+					Schema:     "http",
+					ServerAddr: "localhost:8080",
+				},
+				CollectorConfig: CollectorConfig{
+					PollInterval:   2 * time.Second,
+					ReportInterval: 10 * time.Second,
+					RateLimit:      1,
+				},
+			},
+		},
+		{
 			name: "Env overrides flags for intervals",
 			args: []string{"cmd", "-p", "1", "-r", "2"},
 			env: map[string]string{
@@ -277,12 +313,39 @@ func TestParseFlags(t *testing.T) {
 			},
 		},
 		{
+			name: "Invalid env value for RATE_LIMIT (fallback to flag)",
+			args: []string{"cmd", "-l", "10"},
+			env: map[string]string{
+				"RATE_LIMIT": "not-a-number",
+			},
+			wantErr: false, // ошибка в env не должна ломать парсинг — используется флаг
+			expected: &Config{
+				ServerConfig: ServerConfig{
+					Schema:     "http",
+					ServerAddr: "localhost:8080",
+				},
+				CollectorConfig: CollectorConfig{
+					PollInterval:   2 * time.Second,
+					ReportInterval: 10 * time.Second,
+					RateLimit:      10, // из флага
+				},
+			},
+		},
+		{
 			name: "Invalid env value for REPORT_INTERVAL (fallback to default)",
 			args: []string{"cmd"}, // нет флага -r
 			env: map[string]string{
 				"REPORT_INTERVAL": "-5", // отрицательное значение, но сначала проверим парсинг
 			},
 			wantErr: true, // applyAndValidateIntervals должен вернуть ошибку из-за отрицательного значения
+		},
+		{
+			name: "Invalid env value for RATE_LIMIT (fallback to default)",
+			args: []string{"cmd"}, // нет флага -l
+			env: map[string]string{
+				"RATE_LIMIT": "-5", // отрицательное значение, но сначала проверим парсинг
+			},
+			wantErr: true, // должен вернуть ошибку из-за отрицательного значения
 		},
 		{
 			name:    "Negative interval via flag (validation fails)",
@@ -327,13 +390,32 @@ func TestParseFlags(t *testing.T) {
 				},
 			},
 		},
+		{
+			name: "Empty env value rate limit ignored (fallback to flag)",
+			args: []string{"cmd", "-l", "10"},
+			env: map[string]string{
+				"RATE_LIMIT": "", // пустая строка — игнорируется
+			},
+			wantErr: false,
+			expected: &Config{
+				ServerConfig: ServerConfig{
+					Schema:     "http",
+					ServerAddr: "localhost:8080",
+				},
+				CollectorConfig: CollectorConfig{
+					PollInterval:   2 * time.Second,
+					ReportInterval: 10 * time.Second,
+					RateLimit:      10,
+				},
+			},
+		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 
 			originalEnv := make(map[string]*string)
-			for _, key := range []string{"ADDRESS", "POLL_INTERVAL", "REPORT_INTERVAL", "KEY"} {
+			for _, key := range []string{"ADDRESS", "POLL_INTERVAL", "REPORT_INTERVAL", "KEY", "RATE_LIMIT"} {
 				if val, ok := os.LookupEnv(key); ok {
 					originalEnv[key] = &val
 				} else {
