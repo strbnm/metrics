@@ -24,7 +24,7 @@ type Collector struct {
 	// runtimeInFlight — гейт «не больше одного runtime-батча в полёте»:
 	// пока он не подтверждён или окончательно не провален, следующая дельта
 	// не вырезается, чтобы интервалы батчей не пересекались.
-	runtimeInFlight atomic.Int64
+	runtimeInFlight atomic.Bool
 
 	sendQueue chan []models.Metrics
 	mu        sync.RWMutex
@@ -101,7 +101,7 @@ func (c *Collector) worker(ctx context.Context, sendFunc func(ctx context.Contex
 				}
 				// Любой финальный исход освобождает гейт: при провале счётчик
 				// не подтверждён, и следующий отчёт включит интервал заново
-				c.runtimeInFlight.CompareAndSwap(1, 0)
+				c.runtimeInFlight.CompareAndSwap(true, false)
 			}
 		case <-ctx.Done():
 			return
@@ -147,11 +147,11 @@ func (c *Collector) Start(ctx context.Context, sendFunc func(ctx context.Context
 			// Runtime-пакет уходит не чаще одного «в полёте»: пока предыдущий
 			// не подтвердился или окончательно не провалился, отчёт
 			// пропускается, а опросы копятся в кумулятивном счётчике
-			if _, ok := pollCountOf(rtSnapshot); ok && c.runtimeInFlight.CompareAndSwap(0, 1) {
+			if _, ok := pollCountOf(rtSnapshot); ok && c.runtimeInFlight.CompareAndSwap(false, true) {
 				select {
 				case c.sendQueue <- rtSnapshot:
 				case <-ctx.Done():
-					c.runtimeInFlight.CompareAndSwap(1, 0)
+					c.runtimeInFlight.CompareAndSwap(true, false)
 					return nil
 				}
 			}

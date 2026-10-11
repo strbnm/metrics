@@ -401,7 +401,7 @@ func TestCollectorWorker_SelfHealAfterFailedSend(t *testing.T) {
 
 	// «Отчёт» №1: повторяем контракт Start — захват гейта, затем постановка
 	// батча с кумулятивным счётчиком
-	require.True(t, collector.runtimeInFlight.CompareAndSwap(0, 1),
+	require.True(t, collector.runtimeInFlight.CompareAndSwap(false, true),
 		"gate should be free before the first dispatch")
 	collector.sendQueue <- pollBatch(3)
 
@@ -409,7 +409,7 @@ func TestCollectorWorker_SelfHealAfterFailedSend(t *testing.T) {
 	close(release) // первая отправка завершится ошибкой
 
 	// Воркер обязан освободить гейт и НЕ подтвердить счётчик
-	waitFor(t, func() bool { return collector.runtimeInFlight.Load() == 0 })
+	waitFor(t, func() bool { return collector.runtimeInFlight.Load() == false })
 	assert.Equal(t, int64(0), collector.lastSentPollCount.Load(),
 		"неудачная отправка не должна подтверждать lastSentPollCount")
 	assert.Equal(t, int64(3), <-sentDeltas,
@@ -417,7 +417,7 @@ func TestCollectorWorker_SelfHealAfterFailedSend(t *testing.T) {
 
 	// «Отчёт» №2: гейт снова свободен, интервал должен покрыть
 	// и опросы провалившегося батча (самозалечивание)
-	require.True(t, collector.runtimeInFlight.CompareAndSwap(0, 1),
+	require.True(t, collector.runtimeInFlight.CompareAndSwap(false, true),
 		"worker должен освободить гейт после неудачной отправки")
 	collector.sendQueue <- pollBatch(7)
 
