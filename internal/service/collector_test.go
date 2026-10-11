@@ -112,7 +112,7 @@ func TestCollectSystemMetrics(t *testing.T) {
 
 	hasCPU := false
 	for id := range ids {
-		if len(id) >= len("CPUUtilization") && id[:len("CPUUtilization")] == "CPUUtilization" {
+		if len(id) >= len("CPUutilization") && id[:len("CPUutilization")] == "CPUutilization" {
 			hasCPU = true
 			break
 		}

@@ -28,10 +28,9 @@ func collectSystemMetrics() []models.Metrics {
 	percentages, err := cpu.Percent(0, true)
 	if err == nil && len(percentages) > 0 {
 		for i, p := range percentages {
-			id := "CPUUtilization"
-			if len(percentages) > 1 {
-				id += strconv.Itoa(i)
-			}
+			id := "CPUutilization"
+			id += strconv.Itoa(i + 1)
+
 			metrics = append(metrics, models.Metrics{
 				ID: id, MType: models.Gauge, Value: ptr(p),
 			})
