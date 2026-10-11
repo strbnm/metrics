@@ -36,7 +36,7 @@ func NewCollector(pollInterval, reportInterval time.Duration, rateLimit int) *Co
 		pollInterval:   pollInterval,
 		reportInterval: reportInterval,
 		rateLimit:      rateLimit,
-		sendQueue:      make(chan []models.Metrics, 100), // буфер очереди
+		sendQueue:      make(chan []models.Metrics, rateLimit), // буфер очереди
 	}
 	return c
 }
