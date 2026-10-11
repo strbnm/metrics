@@ -43,6 +43,8 @@ func NewCollector(pollInterval, reportInterval time.Duration, rateLimit int) *Co
 
 // runtimeCollector — отдельная горутина: собирает runtime-метрики и сохраняет локально
 func (c *Collector) runtimeCollector(ctx context.Context, pollTicker <-chan time.Time) {
+	defer c.wg.Done()
+
 	var pollCount int64
 
 	for {
@@ -64,6 +66,7 @@ func (c *Collector) runtimeCollector(ctx context.Context, pollTicker <-chan time
 
 // systemCollector — отдельная горутина: собирает system-метрики и сохраняет локально
 func (c *Collector) systemCollector(ctx context.Context, pollTicker <-chan time.Time) {
+	defer c.wg.Done()
 
 	for {
 		select {
@@ -126,9 +129,11 @@ func (c *Collector) Start(ctx context.Context, sendFunc func(ctx context.Context
 	defer reportTicker.Stop()
 
 	// Горутина сбора runtime-метрик (без отправки)
+	c.wg.Add(1)
 	go c.runtimeCollector(ctx, runtimeTicker.C)
 
 	// Горутина сбора system-метрик (без отправки)
+	c.wg.Add(1)
 	go c.systemCollector(ctx, systemTicker.C)
 
 	for {

@@ -128,6 +128,7 @@ func TestCollectorRuntimeCollector(t *testing.T) {
 	defer cancel()
 
 	done := make(chan struct{})
+	collector.wg.Add(1)
 	go func() {
 		defer close(done)
 		collector.runtimeCollector(ctx, pollTicker)
@@ -162,6 +163,7 @@ func TestCollectorSystemCollector(t *testing.T) {
 	defer cancel()
 
 	done := make(chan struct{})
+	collector.wg.Add(1)
 	go func() {
 		defer close(done)
 		collector.systemCollector(ctx, pollTicker)
