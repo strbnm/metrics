@@ -96,16 +96,17 @@ func ParseFlags() (*Config, error) {
 		} else {
 			rateLimit = &value
 		}
-		if *rateLimit < 0 {
-			return nil, fmt.Errorf("rate limit cannot be negative: %d", *rateLimit)
-		}
-		cfg.CollectorConfig.RateLimit = *rateLimit
 	}
 
 	// Применяем и валидируем значения
 	if err := applyAndValidateIntervals(cfg, *pollInterval, *reportInterval); err != nil {
 		return nil, err
 	}
+
+	if *rateLimit < 0 {
+		return nil, fmt.Errorf("rate limit cannot be negative: %d", *rateLimit)
+	}
+	cfg.CollectorConfig.RateLimit = *rateLimit
 
 	return cfg, nil
 }

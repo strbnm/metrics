@@ -275,6 +275,25 @@ func TestParseFlags(t *testing.T) {
 			},
 		},
 		{
+			name: "Empty Env for rate limit (fallback to flag)",
+			args: []string{"cmd", "-l", "10"},
+			env: map[string]string{
+				"RATE_LIMIT": "",
+			},
+			wantErr: false,
+			expected: &Config{
+				ServerConfig: ServerConfig{
+					Schema:     "http",
+					ServerAddr: "localhost:8080",
+				},
+				CollectorConfig: CollectorConfig{
+					PollInterval:   2 * time.Second,
+					ReportInterval: 10 * time.Second,
+					RateLimit:      10,
+				},
+			},
+		},
+		{
 			name: "Env overrides flags for intervals",
 			args: []string{"cmd", "-p", "1", "-r", "2"},
 			env: map[string]string{
