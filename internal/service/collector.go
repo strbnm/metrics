@@ -3,137 +3,209 @@ package service
 import (
 	"context"
 	"log"
-	"math/rand/v2"
-	"runtime"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	models "github.com/strbnm/metrics/internal/model"
 )
 
 type Collector struct {
+	rateLimit      int
 	pollInterval   time.Duration
 	reportInterval time.Duration
 
-	mu                sync.RWMutex
-	pollCount         int64
-	lastSentPollCount int64
-	lastMetrics       []models.Metrics
+	lastRuntime []models.Metrics
+	lastSystem  []models.Metrics
+
+	// lastSentPollCount — абсолютный pollCount последнего подтверждённого
+	// (успешно отправленного) runtime-батча; обновляют воркеры через CAS-max.
+	lastSentPollCount atomic.Int64
+	// runtimeInFlight — гейт «не больше одного runtime-батча в полёте»:
+	// пока он не подтверждён или окончательно не провален, следующая дельта
+	// не вырезается, чтобы интервалы батчей не пересекались.
+	runtimeInFlight atomic.Bool
+
+	sendQueue chan []models.Metrics
+	mu        sync.RWMutex
+	wg        sync.WaitGroup
 }
 
-func NewCollector(pollInterval, reportInterval time.Duration) *Collector {
-	return &Collector{
+func NewCollector(pollInterval, reportInterval time.Duration, rateLimit int) *Collector {
+	c := &Collector{
 		pollInterval:   pollInterval,
 		reportInterval: reportInterval,
+		rateLimit:      rateLimit,
+		sendQueue:      make(chan []models.Metrics, rateLimit), // буфер очереди
 	}
+	return c
 }
 
-// ptr возвращает указатель на значение.
-func ptr[T any](v T) *T {
-	return &v
-}
+// runtimeCollector — отдельная горутина: собирает runtime-метрики и сохраняет локально
+func (c *Collector) runtimeCollector(ctx context.Context, pollTicker <-chan time.Time) {
+	defer c.wg.Done()
 
-func uint64ToFloat64(value uint64) *float64 {
-	return ptr(float64(value))
-}
-
-func uint32ToFloat64(value uint32) *float64 {
-	return ptr(float64(value))
-}
-
-// collectRuntimeMetrics собирает gauge-метрики из runtime.MemStats
-// и случайное значение RandomValue. Не зависит от состояния коллектора.
-func collectRuntimeMetrics() []models.Metrics {
-	var m runtime.MemStats
-	runtime.ReadMemStats(&m)
-
-	return []models.Metrics{
-		{ID: "Alloc", MType: models.Gauge, Value: uint64ToFloat64(m.Alloc)},
-		{ID: "BuckHashSys", MType: models.Gauge, Value: uint64ToFloat64(m.BuckHashSys)},
-		{ID: "Frees", MType: models.Gauge, Value: uint64ToFloat64(m.Frees)},
-		{ID: "GCCPUFraction", MType: models.Gauge, Value: &m.GCCPUFraction},
-		{ID: "GCSys", MType: models.Gauge, Value: uint64ToFloat64(m.GCSys)},
-		{ID: "HeapAlloc", MType: models.Gauge, Value: uint64ToFloat64(m.HeapAlloc)},
-		{ID: "HeapIdle", MType: models.Gauge, Value: uint64ToFloat64(m.HeapIdle)},
-		{ID: "HeapInuse", MType: models.Gauge, Value: uint64ToFloat64(m.HeapInuse)},
-		{ID: "HeapObjects", MType: models.Gauge, Value: uint64ToFloat64(m.HeapObjects)},
-		{ID: "HeapReleased", MType: models.Gauge, Value: uint64ToFloat64(m.HeapReleased)},
-		{ID: "HeapSys", MType: models.Gauge, Value: uint64ToFloat64(m.HeapSys)},
-		{ID: "LastGC", MType: models.Gauge, Value: uint64ToFloat64(m.LastGC)},
-		{ID: "Lookups", MType: models.Gauge, Value: uint64ToFloat64(m.Lookups)},
-		{ID: "MCacheInuse", MType: models.Gauge, Value: uint64ToFloat64(m.MCacheInuse)},
-		{ID: "MCacheSys", MType: models.Gauge, Value: uint64ToFloat64(m.MCacheSys)},
-		{ID: "MSpanInuse", MType: models.Gauge, Value: uint64ToFloat64(m.MSpanInuse)},
-		{ID: "MSpanSys", MType: models.Gauge, Value: uint64ToFloat64(m.MSpanSys)},
-		{ID: "Mallocs", MType: models.Gauge, Value: uint64ToFloat64(m.Mallocs)},
-		{ID: "NextGC", MType: models.Gauge, Value: uint64ToFloat64(m.NextGC)},
-		{ID: "NumForcedGC", MType: models.Gauge, Value: uint32ToFloat64(m.NumForcedGC)},
-		{ID: "NumGC", MType: models.Gauge, Value: uint32ToFloat64(m.NumGC)},
-		{ID: "OtherSys", MType: models.Gauge, Value: uint64ToFloat64(m.OtherSys)},
-		{ID: "PauseTotalNs", MType: models.Gauge, Value: uint64ToFloat64(m.PauseTotalNs)},
-		{ID: "StackInuse", MType: models.Gauge, Value: uint64ToFloat64(m.StackInuse)},
-		{ID: "StackSys", MType: models.Gauge, Value: uint64ToFloat64(m.StackSys)},
-		{ID: "Sys", MType: models.Gauge, Value: uint64ToFloat64(m.Sys)},
-		{ID: "TotalAlloc", MType: models.Gauge, Value: uint64ToFloat64(m.TotalAlloc)},
-		// Дополнительные метрики
-		{ID: "RandomValue", MType: models.Gauge, Value: ptr(rand.Float64())},
-	}
-}
-
-func (c *Collector) collectOnce() {
-	c.pollCount++
-
-	metrics := collectRuntimeMetrics()
-
-	delta := c.pollCount - c.lastSentPollCount
-	metrics = append(metrics,
-		models.Metrics{ID: "PollCount", MType: models.Counter, Delta: &delta},
-	)
-
-	c.setMetrics(metrics)
-}
-
-func (c *Collector) setMetrics(metrics []models.Metrics) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	c.lastMetrics = metrics
-}
-
-func (c *Collector) GetLastMetrics() []models.Metrics {
-	c.mu.RLock()
-	defer c.mu.RUnlock()
-	return c.lastMetrics
-}
-
-func (c *Collector) Start(ctx context.Context, sendFunc func(ctx context.Context, metrics []models.Metrics) error) {
-	c.collectOnce()
-
-	pollTicker := time.NewTicker(c.pollInterval)
-	defer pollTicker.Stop()
-
-	reportTicker := time.NewTicker(c.reportInterval)
-	defer reportTicker.Stop()
+	var pollCount int64
 
 	for {
 		select {
 		case <-ctx.Done():
 			return
-		case <-pollTicker.C:
-			c.collectOnce()
-		case <-reportTicker.C:
-			c.reportOnce(ctx, sendFunc)
+		case <-pollTicker:
+			pollCount++
+			// Снапшот несёт кумулятивный счётчик (lastSent = 0):
+			// непересекающуюся дельту вырезает Start при постановке в очередь
+			rtMetrics := collectRuntimeMetrics(pollCount, 0)
+
+			c.mu.Lock()
+			c.lastRuntime = rtMetrics
+			c.mu.Unlock()
 		}
 	}
 }
 
-// reportOnce отправляет последний снимок метрик; счётчик отправленных
-// опросов увеличивается только после успешной отправки.
-func (c *Collector) reportOnce(ctx context.Context, sendFunc func(ctx context.Context, metrics []models.Metrics) error) error {
-	metrics := c.GetLastMetrics()
-	if err := sendFunc(ctx, metrics); err != nil {
-		log.Printf("Failed to send metrics: %v", err)
-		return err
+// systemCollector — отдельная горутина: собирает system-метрики и сохраняет локально
+func (c *Collector) systemCollector(ctx context.Context, pollTicker <-chan time.Time) {
+	defer c.wg.Done()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-pollTicker:
+			sysMetrics := collectSystemMetrics()
+
+			c.mu.Lock()
+			c.lastSystem = sysMetrics
+			c.mu.Unlock()
+		}
 	}
-	c.lastSentPollCount = c.pollCount
-	return nil
+}
+
+// worker — воркер из пула: забирает пакеты из очереди и вызывает sendFunc
+func (c *Collector) worker(ctx context.Context, sendFunc func(ctx context.Context, metrics []models.Metrics) error) {
+	defer c.wg.Done()
+	for {
+		select {
+		case metrics, ok := <-c.sendQueue:
+			if !ok {
+				return
+			}
+			p, isRuntime := cutPollCountDelta(metrics, c.lastSentPollCount.Load())
+
+			err := sendFunc(ctx, metrics)
+			if err != nil {
+				log.Printf("Failed to send metrics batch: %v", err)
+			}
+
+			if isRuntime {
+				if err == nil {
+					confirmPollCount(&c.lastSentPollCount, p)
+				}
+				// Любой финальный исход освобождает гейт: при провале счётчик
+				// не подтверждён, и следующий отчёт включит интервал заново
+				c.runtimeInFlight.CompareAndSwap(true, false)
+			}
+		case <-ctx.Done():
+			return
+		}
+	}
+}
+
+func (c *Collector) Start(ctx context.Context, sendFunc func(ctx context.Context, metrics []models.Metrics) error) error {
+	// Инициализируем пул воркеров: ровно rateLimit одновременных вызовов sendFunc
+	for w := 0; w < c.rateLimit; w++ {
+		c.wg.Add(1)
+		go c.worker(ctx, sendFunc)
+	}
+
+	runtimeTicker := time.NewTicker(c.pollInterval)
+	defer runtimeTicker.Stop()
+
+	systemTicker := time.NewTicker(c.pollInterval)
+	defer systemTicker.Stop()
+
+	reportTicker := time.NewTicker(c.reportInterval)
+	defer reportTicker.Stop()
+
+	// Горутина сбора runtime-метрик (без отправки)
+	c.wg.Add(1)
+	go c.runtimeCollector(ctx, runtimeTicker.C)
+
+	// Горутина сбора system-метрик (без отправки)
+	c.wg.Add(1)
+	go c.systemCollector(ctx, systemTicker.C)
+
+	for {
+		select {
+		case <-ctx.Done():
+			close(c.sendQueue)
+			c.wg.Wait()
+			return nil
+		case <-reportTicker.C:
+			// Снимаем снапшоты под одним RLock
+			c.mu.RLock()
+			rtSnapshot := append([]models.Metrics(nil), c.lastRuntime...)
+			sysSnapshot := append([]models.Metrics(nil), c.lastSystem...)
+			c.mu.RUnlock()
+
+			// Runtime-пакет уходит не чаще одного «в полёте»: пока предыдущий
+			// не подтвердился или окончательно не провалился, отчёт
+			// пропускается, а опросы копятся в кумулятивном счётчике
+			if _, ok := pollCountOf(rtSnapshot); ok && c.runtimeInFlight.CompareAndSwap(false, true) {
+				select {
+				case c.sendQueue <- rtSnapshot:
+				case <-ctx.Done():
+					c.runtimeInFlight.CompareAndSwap(true, false)
+					return nil
+				}
+			}
+
+			// Отправляем system-пакет отдельным сообщением в очередь
+			select {
+			case c.sendQueue <- sysSnapshot:
+			case <-ctx.Done():
+				return nil
+			}
+		}
+	}
+}
+
+// pollCountOf возвращает кумулятивное значение PollCount из батча.
+// Признак runtime-батча — наличие этой метрики.
+func pollCountOf(metrics []models.Metrics) (int64, bool) {
+	for _, m := range metrics {
+		if m.ID == "PollCount" && m.Delta != nil {
+			return *m.Delta, true
+		}
+	}
+	return 0, false
+}
+
+// cutPollCountDelta делает за один проход то же, что pollCountOf и
+// перезапись дельты: находит в runtime-батче PollCount, вырезает из
+// кумулятивного значения интервал поверх lastSent и возвращает кумулятивное
+// значение для последующего подтверждения. ok = false означает, что батч
+// не runtime (метрики PollCount в нём нет) и он остался без изменений.
+// Гейт гарантирует, что пока батч в полёте, lastSent не меняется.
+func cutPollCountDelta(metrics []models.Metrics, lastSent int64) (int64, bool) {
+	for i := range metrics {
+		if metrics[i].ID == "PollCount" && metrics[i].Delta != nil {
+			cumulative := *metrics[i].Delta
+			metrics[i].Delta = new(cumulative - lastSent)
+			return cumulative, true
+		}
+	}
+	return 0, false
+}
+
+// confirmPollCount продвигает lastSentPollCount до sent (CAS-max:
+// подтверждения могут приходить не по порядку, откат недопустим)
+func confirmPollCount(field *atomic.Int64, sent int64) {
+	for {
+		cur := field.Load()
+		if sent <= cur || field.CompareAndSwap(cur, sent) {
+			return
+		}
+	}
 }

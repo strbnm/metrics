@@ -93,7 +93,7 @@ func TestNewSender(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			sender, err := NewSender(tt.serverURL)
+			sender, err := NewSender(tt.serverURL, "")
 
 			if tt.wantErr {
 				require.Error(t, err)
@@ -243,7 +243,7 @@ func TestSender_Send(t *testing.T) {
 			server := httptest.NewServer(test.serverHandler)
 			defer server.Close()
 
-			sender, err := NewSender(server.URL)
+			sender, err := NewSender(server.URL, "")
 			assert.NoError(t, err)
 
 			sendErr := sender.Send(ctx, test.metrics)

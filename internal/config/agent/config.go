@@ -12,11 +12,13 @@ import (
 type CollectorConfig struct {
 	PollInterval   time.Duration
 	ReportInterval time.Duration
+	RateLimit      int
 }
 
 type ServerConfig struct {
 	Schema     string
 	ServerAddr string
+	SignKey    string
 }
 
 func (cfg *ServerConfig) ServerURL() string {
@@ -38,6 +40,7 @@ func NewAgentConfig() *Config {
 		CollectorConfig: CollectorConfig{
 			PollInterval:   2 * time.Second,
 			ReportInterval: 10 * time.Second,
+			RateLimit:      2,
 		},
 	}
 }
@@ -53,6 +56,10 @@ func ParseFlags() (*Config, error) {
 		"time interval between polls in seconds")
 	reportInterval := flag.Int64("r", int64(cfg.CollectorConfig.ReportInterval/time.Second),
 		"time interval between reports in seconds")
+
+	flag.StringVar(&cfg.ServerConfig.SignKey, "k", cfg.ServerConfig.SignKey, "key for sign response data")
+
+	rateLimit := flag.Int("l", cfg.CollectorConfig.RateLimit, "max parallel requests")
 
 	flag.Parse()
 
@@ -78,10 +85,28 @@ func ParseFlags() (*Config, error) {
 		}
 	}
 
+	if envSignKey, ok := os.LookupEnv("KEY"); ok && envSignKey != "" {
+		cfg.ServerConfig.SignKey = strings.TrimSpace(envSignKey)
+	}
+
+	if envRateLimit, ok := os.LookupEnv("RATE_LIMIT"); ok && envRateLimit != "" {
+		value, err := strconv.Atoi(envRateLimit)
+		if err != nil {
+			fmt.Printf("invalid value for system environment RATE_LIMIT: %s. Will use default value or value of cmd argument -l if present.\n", envRateLimit)
+		} else {
+			rateLimit = &value
+		}
+	}
+
 	// Применяем и валидируем значения
 	if err := applyAndValidateIntervals(cfg, *pollInterval, *reportInterval); err != nil {
 		return nil, err
 	}
+
+	if *rateLimit < 0 {
+		return nil, fmt.Errorf("rate limit cannot be negative: %d", *rateLimit)
+	}
+	cfg.CollectorConfig.RateLimit = *rateLimit
 
 	return cfg, nil
 }

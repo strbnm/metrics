@@ -65,7 +65,7 @@ func run() error {
 
 	srv := &http.Server{
 		Addr:              cfg.RunAddr,
-		Handler:           newRouter(h, appLogger),
+		Handler:           newRouter(h, appLogger, cfg),
 		ReadHeaderTimeout: readHeaderTimeout,
 	}
 
@@ -150,9 +150,10 @@ func newStorage(
 }
 
 // newRouter собирает цепочку middleware и маршруты API.
-func newRouter(h *handler.Handler, appLogger *zap.SugaredLogger) *chi.Mux {
+func newRouter(h *handler.Handler, appLogger *zap.SugaredLogger, cfg *config.Config) *chi.Mux {
 	r := chi.NewRouter()
 	r.Use(middlewares.StripSlashes)
+	r.Use(middleware.HashSign(cfg.SignKey))
 	r.Use(middleware.GzipMiddleware)
 	r.Use(middleware.WithLogging(appLogger))
 
